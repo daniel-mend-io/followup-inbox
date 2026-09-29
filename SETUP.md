@@ -1,5 +1,8 @@
 # Setup
 
+The checklist. If any step is unclear, [GETTING-STARTED.md](GETTING-STARTED.md)
+explains the same steps in plain words.
+
 The steps only you can do. There is no database, no hosted service and no
 secret to provision: the routines reach Slack, Jira and Calendar through the
 connectors already attached to your Claude account.

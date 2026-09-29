@@ -8,6 +8,11 @@ sent to another person.
 There is no database and no service. The store is a private git repository of
 Markdown files. Git history is the audit trail.
 
+**New here?** Read [GETTING-STARTED.md](GETTING-STARTED.md): what this is, how
+to set up your own private inbox step by step, and how to share the tool.
+[SETUP.md](SETUP.md) is the same as a terse checklist. The rest of this file
+is the design.
+
 ## Two repositories
 
 The module (this repository, shareable) and your instance (private) are kept
@@ -16,6 +21,7 @@ can upgrade the module deliberately.
 
 ```
 followup-inbox/            the module — public, no personal data ever
+  GETTING-STARTED.md       plain-language walkthrough for a new user; how to share the tool
   README.md                this file: what it is, the concurrency model, how to run
   SETUP.md                 the human-only steps
   SKILL.md                 the agent-facing contract for the scripts
