@@ -115,9 +115,10 @@ This turns your settings into three ready-made instructions in a folder called
 
 > install the routines from rendered/manifest.json
 
-It creates three scheduled routines for you: two that look for promises you
-made (morning and midday, then evening) and one that looks for things people
-asked of you and threads that went quiet. You can also do it by hand at https://claude.ai/code/routines: new
+It creates four scheduled routines for you: two that look for promises you
+made (morning and midday, then evening), one that looks for things people
+asked of you and threads that went quiet, and one on weekday mornings that
+suggests efforts from your issue tracker and proposes a next step on each. You can also do it by hand at https://claude.ai/code/routines: new
 routine, paste the text of one rendered file, set its schedule from
 `rendered/manifest.json`, attach Slack, add `my-inbox` as the repository.
 
@@ -133,7 +134,10 @@ python3 tool/scripts/status.py "<id>" dismissed   # not a real thing, drop it
 python3 tool/scripts/sync.py -m "triage"      # save and upload your decisions
 ```
 
-`INBOX.md` in the folder is the same list as a page you can read on GitHub.
+Or use the screen version: `python3 tool/scripts/tui.py`. Press `1` for the
+inbox, `2` for your efforts (the bigger things you are carrying), `0` for the
+robots, `?` for the keys. `INBOX.md` in the folder is the same list as a page
+you can read on GitHub.
 Each note is a small text file you can open. A note you mark done or
 dismissed is never brought back, even if the robots see the same message
 again.

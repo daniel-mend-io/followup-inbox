@@ -68,6 +68,10 @@ calendar:
     - webinar
     - training
 
+# ---- Efforts (the efforts routine) -------------------------------------------
+efforts:
+  stale_days: 7                    # propose a next step when an effort has not been touched for this long
+
 # A colleague who wants a heads-up about external calls they are not invited to.
 # Only used by the customer-calls routine, which is disabled below by default.
 colleague:
@@ -105,6 +109,11 @@ routines:
     template: loose-threads
     cron: "40 6,14 * * *"
     connectors: [Slack, Atlassian]
+
+  - name: efforts                     # suggests efforts from the tracker, proposes next steps
+    template: efforts
+    cron: "0 6 * * 1-5"
+    connectors: [Atlassian, Slack, Google-Calendar]
 
   - name: customer-calls              # optional; needs the `colleague` block above
     template: customer-calls

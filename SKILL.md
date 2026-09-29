@@ -99,7 +99,7 @@ move `new`/`waiting` → `ready`, with `--note`.** Everything else is the human'
 ```bash
 python3 scripts/digest.py                                   # rewrite INBOX.md
 python3 scripts/sync.py -m "commitments: +2 new, 1 ready" items/slack__C01__1.2.md INBOX.md
-python3 scripts/sync.py -m "triage"                         # default paths: items archive INBOX.md
+python3 scripts/sync.py -m "triage"                         # default paths: items archive efforts INBOX.md
 ```
 
 `sync.py` commits, pulls with rebase, resolves the store's conflicts by rule
@@ -107,6 +107,39 @@ python3 scripts/sync.py -m "triage"                         # default paths: ite
 forces. Non-zero exit means the commit is safe locally and the push did not
 happen: report it, do not retry in a loop, do not force. With no remote it
 commits locally and says so.
+
+## Efforts
+
+Everything the user has to keep in their head, one file each under
+`efforts/`. Ids: `effort:<slug>` (manual) or `jira:<KEY>` (suggested from the
+tracker, idempotent). Kinds: `epic | customer | marketing | coordination |
+research | other`. Statuses: `suggested | active | paused | done | dropped`.
+
+```bash
+python3 scripts/efforts.py list                                  # open efforts
+python3 scripts/efforts.py list --all --ids                      # every id ever, the dedupe set
+python3 scripts/efforts.py add --title "Cap One rollout" --kind customer --next "send the plan" --due 2026-10-03
+python3 scripts/efforts.py add --json <<'JSON'                   # routines: status suggested + a suggestion
+[{"id":"jira:PROJ-1","kind":"epic","title":"…","url":"…","status":"suggested","body":"…","suggestion":"next step, one line"}]
+JSON
+python3 scripts/efforts.py suggest "jira:PROJ-1" --text "ask Maya for the beta date"   # routine-owned section
+python3 scripts/efforts.py status "jira:PROJ-1" active           # human: accept (promotes the suggestion to next_action)
+python3 scripts/efforts.py next "jira:PROJ-1" "write the one-pager" --due 2026-10-05
+python3 scripts/efforts.py note "jira:PROJ-1" "beta slipped a week"
+```
+
+**Routines may only `add` with status `suggested` and write `suggest`.**
+Status, next action and body are the human's.
+
+## TUI
+
+```bash
+python3 scripts/tui.py            # 0 routines, 1 inbox, 2 efforts; ? for keys
+python3 scripts/tui.py --check    # print each screen once without curses
+```
+
+Stdlib curses. Actions go through the scripts above, so the TUI never
+bypasses the store rules. `g` runs `sync.py -m triage`.
 
 ## Verify
 

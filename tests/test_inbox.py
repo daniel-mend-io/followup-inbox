@@ -188,7 +188,7 @@ class StoreTests(unittest.TestCase):
         self.assertIn("If `sync.py` failed", morning)
         with open(os.path.join(self.root, "rendered", "manifest.json")) as f:
             names = [r["name"] for r in json.load(f)]
-        self.assertEqual(names, ["commitments-morning-midday", "commitments-evening", "loose-threads"])
+        self.assertEqual(names, ["commitments-morning-midday", "commitments-evening", "loose-threads", "efforts"])
         self.assertFalse(os.path.exists(os.path.join(MODULE, "routines", "rendered")))
 
     def test_verify_passes(self):
@@ -206,6 +206,73 @@ class StoreTests(unittest.TestCase):
                     item(1, created_at="yesterday"), {"id": "slack:C1/1"}):
             self.assertNotEqual(run(self.root, "add.py", "--json", stdin=json.dumps([bad]), check=False).returncode, 0)
         self.assertEqual(os.listdir(os.path.join(self.root, "items")), [])
+
+
+class EffortAndTuiTests(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="inbox-e-")
+        os.makedirs(os.path.join(self.root, "items"))
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_efforts_lifecycle(self):
+        out = run(self.root, "efforts.py", "add", "--title", "Cap One rollout", "--kind", "customer",
+                  "--next", "send the plan", "--due", "2026-10-03").stdout
+        self.assertTrue(out.startswith("created\tefforts/effort__cap-one-rollout.md"), out)
+        out = run(self.root, "efforts.py", "add", "--json", stdin=json.dumps([{
+            "id": "jira:PROJ-1", "kind": "epic", "title": "Plugin", "url": "https://x/1",
+            "status": "suggested", "suggestion": "ask for the beta date\nbecause it is quiet"}])).stdout
+        self.assertTrue(out.startswith("created"), out)
+        self.assertTrue(run(self.root, "efforts.py", "add", "--json", stdin=json.dumps([{"id": "jira:PROJ-1", "kind": "epic", "title": "X"}])).stdout.startswith("exists"))
+        ids = run(self.root, "efforts.py", "list", "--ids").stdout.split()
+        self.assertEqual(ids, ["jira:PROJ-1", "effort:cap-one-rollout"])   # suggested first
+        run(self.root, "efforts.py", "status", "jira:PROJ-1", "active")
+        js = {e["id"]: e for e in json.loads(run(self.root, "efforts.py", "list", "--json").stdout)}
+        self.assertEqual(js["jira:PROJ-1"]["next_action"], "ask for the beta date")   # accepted suggestion
+        self.assertEqual(js["jira:PROJ-1"]["suggestion"], "")
+        run(self.root, "efforts.py", "note", "jira:PROJ-1", "beta slipped")
+        run(self.root, "efforts.py", "next", "jira:PROJ-1", "write one-pager", "--due", "2026-10-05")
+        run(self.root, "efforts.py", "status", "effort:cap-one-rollout", "done")
+        self.assertEqual(run(self.root, "efforts.py", "list", "--ids").stdout.split(), ["jira:PROJ-1"])
+        self.assertNotEqual(run(self.root, "efforts.py", "suggest", "effort:cap-one-rollout", "--text", "x", check=False).returncode, 0)
+        run(self.root, "digest.py")
+        with open(os.path.join(self.root, "INBOX.md")) as f:
+            digest = f.read()
+        self.assertIn("## efforts (1 open)", digest)
+        self.assertIn("write one-pager (due 2026-10-05)", digest)
+
+    def test_tui_shaping_and_check(self):
+        sys.path.insert(0, SCRIPTS)
+        import tui
+        items = [item(1, created_at="2026-09-01T00:00:00Z", status="waiting", actor="Zed"),
+                 item(2, created_at="2026-09-27T00:00:00Z", status="ready", actor="Amy", proposed_reply="hi"),
+                 item(3, created_at="2026-09-28T00:00:00Z", status="done", actor="Bob")]
+        self.assertEqual([i["actor"] for i in tui.inbox_rows(items)], ["Amy", "Zed"])
+        self.assertEqual([i["actor"] for i in tui.inbox_rows(items, "actor", filt="all")], ["Amy", "Bob", "Zed"])
+        self.assertEqual([i["actor"] for i in tui.inbox_rows(items, "status")], ["Amy", "Zed"])
+        self.assertEqual([i["actor"] for i in tui.inbox_rows(items, "oldest", filt="all")], ["Zed", "Amy", "Bob"])
+        line = tui.inbox_line(items[1], 100)
+        self.assertIn("* Amy", line)
+        self.assertTrue(len(line) <= 100)
+        efforts = [{"id": "a", "status": "active", "kind": "epic", "title": "B", "next_action_due": "2026-10-05", "last_touched": "2026-09-01"},
+                   {"id": "b", "status": "suggested", "kind": "customer", "title": "A", "suggestion": "do x", "last_touched": "2026-09-20"},
+                   {"id": "c", "status": "done", "kind": "other", "title": "C", "last_touched": "2026-09-21"}]
+        self.assertEqual([e["id"] for e in tui.effort_rows(efforts)], ["b", "a"])
+        self.assertEqual([e["id"] for e in tui.effort_rows(efforts, "title", filt="all")], ["b", "a", "c"])
+        self.assertIn("*do x", tui.effort_line(efforts[1], 120))
+        with open(os.path.join(self.root, "config.yml"), "w") as f:
+            with open(os.path.join(MODULE, "config.example.yml")) as src:
+                f.write(src.read())
+        os.makedirs(os.path.join(self.root, "state"))
+        with open(os.path.join(self.root, "state", "routine-ids.md"), "w") as f:
+            f.write("| routine | id |\n|---|---|\n| loose-threads | `trig_abc` |\n")
+        run(self.root, "add.py", "--json", stdin=json.dumps([item(1)]))
+        out = run(self.root, "tui.py", "--check").stdout
+        self.assertIn("== Routines ==", out)
+        self.assertIn("loose-threads", out)
+        self.assertIn("item 1", out)
+        self.assertEqual(tui.routine_ids_from_state(os.path.join(self.root, "state", "routine-ids.md")), {"loose-threads": "trig_abc"})
 
 
 class GitTests(unittest.TestCase):

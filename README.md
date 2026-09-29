@@ -26,7 +26,7 @@ followup-inbox/            the module — public, no personal data ever
   SETUP.md                 the human-only steps
   SKILL.md                 the agent-facing contract for the scripts
   config.example.yml       people, channels, hours, timezone, schedules
-  scripts/                 add | list | status | draft | digest | sync | verify | render
+  scripts/                 add | list | status | draft | digest | sync | verify | render | efforts | tui
   routines/                one prompt template per routine, rendered from config
   state/                   operational notes, memory-file shaped (index + DST caveat)
   tests/                   python3 -m unittest discover -s tests
@@ -35,6 +35,7 @@ my-inbox/                  your instance — private; what the routines clone
   config.yml               filled-in copy of config.example.yml
   items/                   open items, one file each
   archive/YYYY-MM/         closed items (done / dismissed)
+  efforts/                 the things you keep in your head, one file each
   INBOX.md                 generated digest — never hand-edited
   rendered/                routine prompts + manifest.json, generated, gitignored
   state/routine-ids.md     which cloud routines were created from this instance
@@ -109,6 +110,26 @@ line, JSON-quoted when needed) so any YAML or frontmatter library reads it,
 and `scripts/list.py --json` gives the same records as JSON. A TUI or any
 other client builds on either; `tests/` checks that a real YAML parser accepts
 what we write.
+
+## Efforts
+
+Items are what arrives; efforts are what you carry: an epic, a customer
+situation, a marketing push, coordination with another team. One file each
+under `efforts/`, same frontmatter shape, ids `effort:<slug>` or `jira:<KEY>`.
+You add them by hand (`efforts.py add`, or `a` in the TUI). The `efforts`
+routine suggests the ones the tracker shows you own (status `suggested`, for
+you to accept or drop) and proposes a next concrete step on any open effort
+that has none or has gone quiet. Only you change an effort's status, next
+action or notes.
+
+## The TUI
+
+`scripts/tui.py` is a stdlib curses front end: screen 0 lists the routines
+with today's local firing times and the last store commit from each; screen 1
+is the inbox, sortable by age, status, source, kind or actor, with expand,
+triage and copy-the-draft keys; screen 2 is the efforts list with accept,
+next-action and note keys. Every action runs the same scripts a routine would,
+so the store rules hold; `g` commits and pushes your triage.
 
 ## Concurrency
 

@@ -154,7 +154,7 @@ def validate_id(item_id):
     if not isinstance(item_id, str) or not _ID_RE.match(item_id):
         raise InboxError(f"bad id: {item_id!r} (want <source>:<source-specific-key>, no whitespace)")
     source = item_id.split(":", 1)[0]
-    if source not in SOURCES:
+    if source not in SOURCES and source != "effort":
         raise InboxError(f"bad id: {item_id!r} (prefix must be one of {', '.join(SOURCES)})")
     return item_id
 
@@ -240,26 +240,26 @@ def _load_scalar(raw):
     return s
 
 
-def dump_item(item):
-    """Serialise an item dict to file text."""
+def dump_item(item, fields=FIELDS, section_heading=PROPOSED_HEADING, section_key="proposed_reply"):
+    """Serialise a record dict to file text: frontmatter (fields, in order), body, one named section."""
     lines = ["---"]
-    for key in FIELDS:
+    for key in fields:
         if key == "meta" and not item.get("meta"):
             continue
         lines.append(f"{key}: {_dump_scalar(item.get(key))}")
     lines.append("---")
     body = (item.get("body") or "").strip("\n")
-    reply = (item.get("proposed_reply") or "").strip("\n")
+    section = (item.get(section_key) or "").strip("\n")
     text = "\n".join(lines) + "\n"
     if body:
         text += "\n" + body + "\n"
-    if reply:
-        text += "\n" + PROPOSED_HEADING + "\n\n" + reply + "\n"
+    if section:
+        text += "\n" + section_heading + "\n\n" + section + "\n"
     return text
 
 
-def parse_item(text, path=None):
-    """Parse file text into an item dict (frontmatter keys + body + proposed_reply)."""
+def parse_item(text, path=None, section_heading=PROPOSED_HEADING, section_key="proposed_reply"):
+    """Parse file text into a dict (frontmatter keys + body + the named section)."""
     if not text.startswith("---"):
         raise InboxError(f"{path or 'item'}: missing frontmatter")
     parts = text.split("\n---", 1)
@@ -275,16 +275,16 @@ def parse_item(text, path=None):
         if not sep:
             raise InboxError(f"{path or 'item'}: bad frontmatter line {line!r}")
         item[key.strip()] = _load_scalar(value)
-    body, reply = _split_body(rest)
+    body, section = _split_body(rest, section_heading)
     item["body"] = body
-    item["proposed_reply"] = reply
+    item[section_key] = section
     if path:
         item["_path"] = path
     return item
 
 
-def _split_body(rest):
-    marker = "\n" + PROPOSED_HEADING
+def _split_body(rest, heading=PROPOSED_HEADING):
+    marker = "\n" + heading
     text = "\n" + rest
     idx = text.find(marker)
     if idx == -1:
@@ -323,11 +323,11 @@ def read_item(path):
         return parse_item(f.read(), path)
 
 
-def write_item(path, item):
+def write_item(path, item, **dump_kwargs):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        f.write(dump_item(item))
+        f.write(dump_item(item, **dump_kwargs))
     os.replace(tmp, path)
 
 
@@ -382,6 +382,76 @@ def rel(path):
 
 def sort_newest_first(items):
     return sorted(items, key=lambda it: parse_ts(it["created_at"]) or now_utc(), reverse=True)
+
+
+# ----------------------------------------------------------------------------
+# Efforts: the things the user has to keep in their head — epics, customer
+# situations, marketing pushes, cross-team coordination. One file each under
+# efforts/. Added by hand, or suggested by a routine (status `suggested`) from
+# the issue tracker for the user to accept. Same file shape as items.
+# ----------------------------------------------------------------------------
+
+EFFORTS_DIR = os.path.join(REPO_ROOT, "efforts")
+EFFORT_FIELDS = ("id", "kind", "title", "source", "url", "status", "next_action",
+                 "next_action_due", "last_touched", "created_at", "meta")
+EFFORT_KINDS = ("epic", "customer", "marketing", "coordination", "research", "other")
+EFFORT_STATUSES = ("suggested", "active", "paused", "done", "dropped")
+EFFORT_OPEN = ("suggested", "active", "paused")
+SUGGESTION_HEADING = "## Suggested next action"
+_EFFORT_ID_RE = re.compile(r"^(effort|jira):[^\s]+$")
+
+
+def validate_effort_id(effort_id):
+    if not isinstance(effort_id, str) or not _EFFORT_ID_RE.match(effort_id):
+        raise InboxError(f"bad effort id: {effort_id!r} (want effort:<slug> or jira:<KEY>)")
+    return effort_id
+
+
+def slugify(text):
+    slug = re.sub(r"[^a-z0-9]+", "-", str(text).lower()).strip("-")
+    return slug[:60] or "effort"
+
+
+def effort_path(effort_id):
+    validate_effort_id(effort_id)
+    return os.path.join(EFFORTS_DIR, id_to_filename(effort_id.replace("effort:", "effort:", 1)))
+
+
+def read_effort(path):
+    with open(path, encoding="utf-8") as f:
+        return parse_item(f.read(), path, section_heading=SUGGESTION_HEADING, section_key="suggestion")
+
+
+def write_effort(path, effort):
+    write_item(path, effort, fields=EFFORT_FIELDS, section_heading=SUGGESTION_HEADING, section_key="suggestion")
+
+
+def load_efforts(include_closed=False):
+    out = []
+    if not os.path.isdir(EFFORTS_DIR):
+        return out
+    for name in sorted(os.listdir(EFFORTS_DIR)):
+        if not name.endswith(".md") or name.startswith("."):
+            continue
+        try:
+            e = read_effort(os.path.join(EFFORTS_DIR, name))
+        except InboxError as ex:
+            print(f"warning: skipping efforts/{name}: {ex}", file=sys.stderr)
+            continue
+        if include_closed or e.get("status") in EFFORT_OPEN:
+            out.append(e)
+    return out
+
+
+def validate_effort(e):
+    for key in ("id", "kind", "title"):
+        if not e.get(key):
+            raise InboxError(f"effort: missing required field: {key}")
+    validate_effort_id(e["id"])
+    if e["kind"] not in EFFORT_KINDS:
+        raise InboxError(f"bad effort kind {e['kind']!r}; want one of {', '.join(EFFORT_KINDS)}")
+    if e.get("status", "active") not in EFFORT_STATUSES:
+        raise InboxError(f"bad effort status {e['status']!r}; want one of {', '.join(EFFORT_STATUSES)}")
 
 
 # ----------------------------------------------------------------------------

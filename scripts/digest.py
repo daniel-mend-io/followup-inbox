@@ -13,8 +13,8 @@ import datetime as dt
 import os
 import sys
 
-from _inbox_common import (ARCHIVE_DIR, DIGEST_PATH, OPEN_STATUSES, SOURCES, load_all,
-                           load_config, local_zone, now_utc, parse_ts, rel, sort_newest_first)
+from _inbox_common import (ARCHIVE_DIR, DIGEST_PATH, OPEN_STATUSES, SOURCES, load_all, load_config,
+                           load_efforts, local_zone, now_utc, parse_ts, rel, sort_newest_first)
 
 STATUS_ORDER = ("ready", "waiting", "new")   # most actionable first
 STATUS_BLURB = {
@@ -65,6 +65,16 @@ def render(items, config):
                     tail.append(f"[source]({it['url']})")
                 lines.append(" ".join(bits) + (" — " + "; ".join(tail) if tail else ""))
             lines.append("")
+
+    efforts = load_efforts(include_closed=False)
+    if efforts:
+        lines.append(f"## efforts ({len(efforts)} open)")
+        lines.append("")
+        for e in sorted(efforts, key=lambda x: (x.get("status") != "suggested", str(x.get("next_action_due") or "9999"))):
+            nxt = e.get("next_action") or (("suggested: " + e["suggestion"].splitlines()[0]) if e.get("suggestion") else "no next action")
+            due = f" (due {e['next_action_due']})" if e.get("next_action_due") else ""
+            lines.append(f"- **{e.get('status')}** {e.get('kind')}: [{e['title']}]({rel(e['_path'])}) → {nxt}{due}")
+        lines.append("")
 
     # closed this month, for a sense of throughput; the archive holds the rest
     month = now_utc().strftime("%Y-%m")

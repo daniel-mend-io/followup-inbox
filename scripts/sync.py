@@ -29,7 +29,7 @@ import time
 
 from _inbox_common import DIGEST_PATH, REPO_ROOT, InboxError, die, git, is_git_repo, load_config, cfg_get, rel
 
-DEFAULT_PATHS = ("items", "archive", "INBOX.md")
+DEFAULT_PATHS = ("items", "archive", "efforts", "INBOX.md")
 
 
 def _identity_args(config):
@@ -78,7 +78,7 @@ def _resolve_rebase_conflicts(ident):
                 git("checkout", "--ours", "--", p, check=False)  # any content; regenerated below
                 regenerate_digest()
                 git("add", "--", p)
-            elif p.startswith(("items/", "archive/")):
+            elif p.startswith(("items/", "archive/", "efforts/")):
                 # upstream ("ours" during a rebase) wins; if upstream removed/moved it, drop ours
                 if git("cat-file", "-e", f"HEAD:{p}", check=False).returncode == 0:
                     git("checkout", "HEAD", "--", p)
