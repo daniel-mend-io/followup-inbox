@@ -67,7 +67,11 @@ def build_context(config, routine):
     ctx["module_path"] = module_path
     ctx["scripts"] = f"python3 {module_path}/scripts" if module_path else "python3 scripts"
     ctx["skill_path"] = f"{module_path}/SKILL.md" if module_path else "SKILL.md"
-    ctx["inbox_link"] = f"{str(cfg_get(config, 'git.repo_url', '')).rstrip('/')}/blob/{cfg_get(config, 'git.branch', 'main')}/INBOX.md"
+    repo_url = str(cfg_get(config, "git.repo_url", "")).rstrip("/")
+    if repo_url.endswith(".git"):
+        repo_url = repo_url[:-4]
+    ctx["git"] = dict(config.get("git") or {}, repo_url=repo_url)
+    ctx["inbox_link"] = f"{repo_url}/blob/{cfg_get(config, 'git.branch', 'main')}/INBOX.md"
     return ctx
 
 
@@ -151,7 +155,7 @@ def render_all(config, only=None):
             "connectors": routine.get("connectors") or ["Slack"],
             "allowed_tools": ["Bash", "Read", "Write", "Edit", "Glob", "Grep"]
                              + [f"mcp__{c}" for c in (routine.get("connectors") or ["Slack"])],
-            "git_repository": cfg_get(config, "git.repo_url"),
+            "git_repository": ctx["git"]["repo_url"],
             "prompt": prompt,
         })
     return results
