@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Regenerate INBOX.md: open items grouped by status then source, newest first.
+
+Usage:
+  ./digest.py            # rewrite INBOX.md
+  ./digest.py --stdout   # print instead
+
+Run at the end of every routine run. Never hand-edit INBOX.md; it is derived.
+"""
+
+import argparse
+import datetime as dt
+import os
+import sys
+
+from _inbox_common import (ARCHIVE_DIR, DIGEST_PATH, OPEN_STATUSES, SOURCES, load_all,
+                           load_config, local_zone, now_utc, parse_ts, rel, sort_newest_first)
+
+STATUS_ORDER = ("ready", "waiting", "new")   # most actionable first
+STATUS_BLURB = {
+    "ready": "trigger met, needs you",
+    "waiting": "trigger not met yet",
+    "new": "not yet triaged",
+}
+
+
+def render(items, config):
+    tz = local_zone(config)
+    tzname = getattr(tz, "key", "UTC")
+    now = now_utc().astimezone(tz)
+    open_items = [it for it in items if it.get("status") in OPEN_STATUSES]
+    lines = ["# Inbox", "",
+             f"_Generated {now.strftime('%Y-%m-%d %H:%M')} {tzname}. Do not edit; run `scripts/digest.py`._",
+             ""]
+    counts = {s: sum(1 for it in open_items if it["status"] == s) for s in STATUS_ORDER}
+    drafts = sum(1 for it in open_items if it.get("proposed_reply"))
+    lines.append(f"**Open: {len(open_items)}** — " +
+                 ", ".join(f"{counts[s]} {s}" for s in STATUS_ORDER) +
+                 (f"; {drafts} with a proposed reply" if drafts else ""))
+    lines.append("")
+
+    for status in STATUS_ORDER:
+        group = [it for it in open_items if it["status"] == status]
+        if not group:
+            continue
+        lines.append(f"## {status} ({len(group)}) — {STATUS_BLURB[status]}")
+        lines.append("")
+        for source in SOURCES:
+            sub = sort_newest_first([it for it in group if it["source"] == source])
+            if not sub:
+                continue
+            lines.append(f"### {source}")
+            lines.append("")
+            for it in sub:
+                created = parse_ts(it["created_at"]).astimezone(tz).strftime("%Y-%m-%d")
+                bits = [f"- {created}", f"**{it['kind']}**", f"[{it['title']}]({rel(it['_path'])})"]
+                tail = []
+                if it.get("actor"):
+                    tail.append(f"waiting: {it['actor']}")
+                if it.get("trigger"):
+                    tail.append(f"trigger: {it['trigger']}")
+                if it.get("proposed_reply"):
+                    tail.append("draft ready")
+                if it.get("url"):
+                    tail.append(f"[source]({it['url']})")
+                lines.append(" ".join(bits) + (" — " + "; ".join(tail) if tail else ""))
+            lines.append("")
+
+    # closed this month, for a sense of throughput; the archive holds the rest
+    month = now_utc().strftime("%Y-%m")
+    mdir = os.path.join(ARCHIVE_DIR, month)
+    closed = len([n for n in os.listdir(mdir) if n.endswith(".md")]) if os.path.isdir(mdir) else 0
+    lines.append(f"_Closed this month: {closed} (see `archive/{month}/`)._")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_digest():
+    text = render(load_all(include_archive=False), load_config())
+    tmp = DIGEST_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, DIGEST_PATH)
+    return text
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--stdout", action="store_true")
+    args = ap.parse_args()
+    if args.stdout:
+        sys.stdout.write(render(load_all(include_archive=False), load_config()))
+    else:
+        write_digest()
+        print(f"wrote {rel(DIGEST_PATH)}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,161 @@
+---
+name: followup-inbox
+description: Operate the follow-up inbox store — add items found in Slack/Jira/email/calendar, list what is open, draft replies, change status, regenerate INBOX.md and commit safely. Use when a routine or a person needs to read or write inbox items.
+---
+
+# followup-inbox — agent contract
+
+The store is the instance git repository: `config.yml`, `items/` (open),
+`archive/YYYY-MM/` (closed) and a generated `INBOX.md`. This module is usually
+vendored into it as the `tool/` submodule, so from the instance root every
+command is `python3 tool/scripts/<name>.py`; the examples below omit the
+`tool/` prefix. If `tool/scripts` is empty, run `git submodule update --init`
+first. Never edit item files or `INBOX.md` by hand; every write goes through
+a script. Stdlib only; nothing to install.
+
+The scripts find the store by walking up from the current directory to the
+first one holding `config.yml` or `items/`; set `INBOX_ROOT=/path` to override.
+
+## Read what is known
+
+```bash
+python3 scripts/list.py --all --ids                       # every id ever recorded, open or closed — the dedupe set
+python3 scripts/list.py                                   # open items, newest first (new, waiting, ready)
+python3 scripts/list.py --status waiting,ready --source slack --kind commitment --json
+python3 scripts/list.py --min-age 7 --status waiting      # stale
+python3 scripts/list.py --max-age 1                       # created in the last day
+```
+
+Statuses: `new | waiting | ready | done | dismissed`. Sources: `slack | jira |
+email | calendar`. Kinds: `commitment | loose_thread | needs_reply | fyi`.
+`--json` returns full records including `body`, `proposed_reply` and `path`.
+
+## Add items (idempotent)
+
+```bash
+python3 scripts/add.py --json <<'JSON'
+[{"id": "slack:C0123456789/1789739475.264789",
+  "source": "slack",
+  "kind": "commitment",
+  "created_at": "2026-09-28T13:51:15Z",
+  "title": "Send Alex the toggle behaviour write-up",
+  "url": "https://example.slack.com/archives/C0123456789/p1789739475264789",
+  "actor": "Alex",
+  "trigger": "after the 8.5 release",
+  "status": "waiting",
+  "body": "> I'll write this up after the release\n\nAlex asked in #product how the toggle behaves.",
+  "proposed_reply": null}]
+JSON
+```
+
+One object or an array. Prints one line per item: `created`, `enriched` or
+`exists`, then the path. Exit 0 in all three cases; exit 1 on a bad record
+(the others still land). Flag form for a single item:
+`add.py --id … --source … --kind … --created-at … --title … [--url --actor
+--trigger --status --body|--body-file --proposed-reply|--proposed-reply-file --meta JSON]`.
+
+Ids are `<source>:<source-specific key>` with no whitespace, and the prefix
+must equal `source`:
+
+| source | id | note |
+|---|---|---|
+| slack | `slack:<channel id>/<message ts>` | from the permalink `…/archives/<CHANNEL>/p1789739475264789` → ts `1789739475.264789` (dot before the last six digits). Thread items use the root ts. |
+| calendar | `calendar:<event id>` | instance id for recurring events |
+| jira | `jira:<comment id>` or `jira:<issue key>` | |
+| email | `email:<message-id>` | |
+
+`created_at` is when it happened at the source, UTC. `seen_at` is filled in.
+`status` defaults to `new`; use `waiting` when a trigger is stated and not
+met, `ready` when it is actionable now.
+
+## Draft a reply
+
+```bash
+python3 scripts/draft.py "<id>" --file - <<'TEXT'
+the reply, in the user's voice
+TEXT
+python3 scripts/draft.py "<id>" --text "one-liner"
+python3 scripts/draft.py "<id>" --clear
+```
+
+Sets or replaces the `## Proposed reply` section. Refuses on closed items.
+
+## Change status
+
+```bash
+python3 scripts/status.py "<id>" ready --note "trigger met: release 8.5 shipped 2026-10-02"
+python3 scripts/status.py "<id>" done
+python3 scripts/status.py "<id>" dismissed
+python3 scripts/status.py "<id>" new --reopen        # humans only
+```
+
+`done` / `dismissed` move the file to `archive/YYYY-MM/`. **Routines may only
+move `new`/`waiting` → `ready`, with `--note`.** Everything else is the human's.
+
+## Digest and commit
+
+```bash
+python3 scripts/digest.py                                   # rewrite INBOX.md
+python3 scripts/sync.py -m "commitments: +2 new, 1 ready" items/slack__C01__1.2.md INBOX.md
+python3 scripts/sync.py -m "triage"                         # default paths: items archive INBOX.md
+```
+
+`sync.py` commits, pulls with rebase, resolves the store's conflicts by rule
+(remote wins for items; digest regenerated), pushes, retries five times, never
+forces. Non-zero exit means the commit is safe locally and the push did not
+happen: report it, do not retry in a loop, do not force. With no remote it
+commits locally and says so.
+
+## Verify
+
+```bash
+python3 scripts/verify.py            # write, read back, close, re-add (must not re-raise), digest, delete
+python3 scripts/verify.py --commit   # the same, through sync.py, proving push access
+```
+
+Ends with `ok`.
+
+## Routines
+
+```bash
+python3 scripts/render.py            # config.yml + the module's routines/*.md → rendered/*.md + rendered/manifest.json
+python3 scripts/render.py --schedule # crons with today's local times
+python3 scripts/render.py --stdout loose-threads
+```
+
+**Installing them (first run on a new account).** For each entry in
+`rendered/manifest.json`, create one scheduled cloud routine with:
+`name`, `cron_expression`, `model`, the prompt from `prompt` (verbatim), the
+repository `git_repository` as the session source, `allowed_tools`, and the
+listed `connectors` attached (Slack always; Atlassian and Google-Calendar when
+listed and connected). In Claude Code that is the schedule skill / `RemoteTrigger`
+create call; ask the user which environment to run in. Disabled routines are
+not in the manifest. Record the resulting routine ids in
+`state/routine-ids.md` (see `state/INDEX.md` for the file shape).
+
+## Common gotchas
+
+- **Run from inside the instance**, or set `INBOX_ROOT`. The scripts walk up
+  from the current directory looking for `config.yml` or `items/`; from
+  elsewhere they fall back to the module's own directory and you will write
+  into the wrong place.
+- **Quote ids.** They contain `:` and `/`; in JSON that is fine, on a shell
+  line wrap them in double quotes.
+- **Do not check for the file before `add`.** `add` is idempotent and looks in
+  the archive too. Use `list.py --all --ids` only to skip re-triage work.
+- **`exists` on an archived path means the user closed it.** Leave it. Do not
+  create a variant id to get around it.
+- **Stage what you created.** Pass the paths `add.py` printed plus `INBOX.md`
+  to `sync.py`, so an unrelated half-edited file in the clone is never swept
+  into a routine's commit.
+- **Slack ts has a dot.** `p1789739475264789` in a permalink is
+  `1789739475.264789` as an id. Get it wrong and every re-scan creates a new
+  item.
+- **`created_at` is the source time, not now.** Sorting, ageing and the digest
+  all key off it.
+- **Timestamps are ISO-8601 with a zone.** `2026-09-28T13:51:15Z` or
+  `…+02:00`. Naive values are read as UTC.
+- **A quiet run commits nothing.** No new items, no drafts, no promotions:
+  stop without `digest`/`sync`, without a notification.
+- **Crons are UTC and do not follow DST.** `render.py --schedule` shows the
+  local drift.

@@ -1,0 +1,9 @@
+.env
+config.yml
+items/
+archive/
+INBOX.md
+rendered/
+__pycache__/
+*.tmp
+.DS_Store

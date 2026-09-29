@@ -1,0 +1,108 @@
+# followup-inbox configuration. Copy to config.yml and fill in.
+#
+# config.yml IS committed: the routines run from a clone of this repo, and the
+# repo must be private anyway because item bodies quote your real messages.
+# Secrets never go here. v1 needs none — the routines reach Slack, Jira and
+# Calendar through the connectors already attached to your Claude account.
+#
+# The parser is a small YAML subset: nested maps, lists, quoted strings,
+# `|` block strings and comments. No anchors, no inline {…} / […] collections.
+
+# ---- who the inbox belongs to ------------------------------------------------
+user:
+  name: Jane Doe
+  email: jane@example.com
+  slack_id: U0000000000            # Slack member id (Profile → More → Copy member ID)
+  description: a product manager at Example Corp   # one clause; finishes "…for Jane Doe, <description>"
+
+timezone: Europe/Warsaw            # IANA name. Crons below are UTC and do NOT follow DST.
+working_hours: "09:00-18:00"       # local; routines treat time outside as quiet
+internal_email_domain: example.com # calendar attendees outside this domain are external
+
+# ---- where the store lives ---------------------------------------------------
+# Two-repo layout (recommended): this file, items/ and archive/ live in your
+# PRIVATE instance repo, and the public module is vendored into it as a git
+# submodule. module_path is that submodule's directory; the rendered prompts
+# then call `python3 <module_path>/scripts/…`. Leave it empty for a one-repo
+# layout where scripts/ sits next to items/.
+module_path: tool
+
+git:
+  repo_url: https://github.com/you/followup-inbox   # PRIVATE. Routines clone, commit and push here.
+  branch: main
+  author_name: followup-inbox      # identity for routine commits
+  author_email: inbox@localhost
+
+# ---- notification ------------------------------------------------------------
+notify:
+  slack_dm: true                   # after a run that found something, DM *you* a short digest.
+                                   # false = write files only; read INBOX.md yourself.
+                                   # Either way a routine never messages anyone else.
+
+# ---- how drafts should sound -------------------------------------------------
+voice: |
+  Short, direct and plain. No filler openers, no "just circling back",
+  no "I wanted to", no emoji, no restating the whole thread. Answer the
+  thing that was promised; say what happens next if something is still open.
+
+# ---- Slack -------------------------------------------------------------------
+slack:
+  lookback_days: 7                 # each commitment scan covers this window (idempotent, so overlap is fine)
+  first_run_lookback_days: 30      # when the store is empty
+  loose_thread_lookback_days: 14
+  loose_thread_quiet_hours: 24     # a thread still moving is not loose yet
+  include_channels: []             # empty = every channel and DM you are in
+  exclude_channels:                # names or ids; announcements, bots, social
+    - "#random"
+
+# ---- Calendar (only the customer-calls routine) -------------------------------
+calendar:
+  horizon_days: 7
+  exclude_keywords:                # event titles matching these are skipped
+    - interview
+    - candidate
+    - webinar
+    - training
+
+# A colleague who wants a heads-up about external calls they are not invited to.
+# Only used by the customer-calls routine, which is disabled below by default.
+colleague:
+  name: Sam Lee
+  email: sam@example.com
+  slack_id: U1111111111
+  timezone: Europe/Amsterdam
+  description: Director of Product
+
+# ---- routines ----------------------------------------------------------------
+# One entry per scheduled agent. `template` names a file in routines/.
+# Cron is 5-field UTC; minimum interval one hour. Run `scripts/render.py --schedule`
+# to see today's local firing times. Any cron that must stay at a fixed LOCAL
+# time needs bumping by hand at each DST changeover (see README).
+# `connectors` are the claude.ai connector names the routine needs attached.
+routines_default:
+  model: claude-opus-5
+
+routines:
+  - name: commitments-morning-midday
+    template: commitments
+    cron: "45 6,10 * * *"
+    connectors: [Slack, Atlassian, Google-Calendar]
+    end_of_day: false
+
+  - name: commitments-evening
+    template: commitments
+    cron: "15 16 * * *"
+    connectors: [Slack, Atlassian, Google-Calendar]
+    end_of_day: true
+    stale_days: 7                  # flag items waiting longer than this
+
+  - name: loose-threads
+    template: loose-threads
+    cron: "40 6,14 * * *"
+    connectors: [Slack, Atlassian]
+
+  - name: customer-calls              # optional; needs the `colleague` block above
+    template: customer-calls
+    cron: "30 6 * * *"
+    connectors: [Google-Calendar, Slack]
+    enabled: false
