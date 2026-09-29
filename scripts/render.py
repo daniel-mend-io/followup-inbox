@@ -30,7 +30,9 @@ from _inbox_common import MODULE_ROOT, REPO_ROOT, InboxError, cfg_get, die, load
 ROUTINES_DIR = os.path.join(MODULE_ROOT, "routines")   # templates ship with the module
 OUT_DIR = os.path.join(REPO_ROOT, "rendered")           # output lands in the instance
 
-_BLOCK = re.compile(r"\{\{#(if|unless) ([\w.]+)\}\}(.*?)\{\{/\1\}\}", re.S)
+# innermost block first: the body may not contain another opener, and the loop
+# in render_text repeats until nothing matches, so nesting resolves inside-out
+_BLOCK = re.compile(r"\{\{#(if|unless) ([\w.]+)\}\}((?:(?!\{\{#).)*?)\{\{/\1\}\}", re.S)
 _VAR = re.compile(r"\{\{([\w.]+)(?:\|(\w+))?\}\}")
 
 
@@ -119,6 +121,8 @@ def render_text(template, ctx, name="template"):
         prev = text
         text = _BLOCK.sub(blocks, text)
     text = _VAR.sub(lambda m: _fmt(lookup(m.group(1)), m.group(2)), text)
+    if "{{" in text or "}}" in text:
+        raise InboxError(f"{name}: unbalanced or unknown template syntax left in output")
     if missing:
         raise InboxError(f"{name}: config has no value for: {', '.join(sorted(set(missing)))}")
     return text

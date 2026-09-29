@@ -179,6 +179,12 @@ class StoreTests(unittest.TestCase):
         self.assertIn("Read `tool/SKILL.md`", prompt)
         self.assertIn("--min-age 7", prompt)           # end_of_day block rendered
         self.assertNotIn("{{", prompt)
+        with open(os.path.join(self.root, "rendered", "commitments-morning-midday.md")) as f:
+            morning = f.read()
+        self.assertNotIn("{{", morning)
+        self.assertNotIn("stale past", morning)                 # end_of_day block dropped…
+        self.assertIn("This DM to the user is the only message", morning)   # …without eating the rest
+        self.assertIn("If `sync.py` failed", morning)
         with open(os.path.join(self.root, "rendered", "manifest.json")) as f:
             names = [r["name"] for r in json.load(f)]
         self.assertEqual(names, ["commitments-morning-midday", "commitments-evening", "loose-threads"])
