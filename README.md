@@ -56,7 +56,7 @@ One item is one Markdown file with YAML frontmatter. The schema is the old
 ---
 id: "slack:C031MTZ61J4/1789739475.264789"   # stable, source-derived → idempotent
 source: slack                                # slack | jira | email | calendar
-kind: commitment                             # commitment | loose_thread | needs_reply | fyi
+kind: commitment                             # commitment | ask | needs_reply | loose_thread | fyi
 created_at: 2026-09-28T13:51:15Z             # when it happened at the source
 seen_at: 2026-09-28T14:02:00Z                # when a routine first found it
 title: Reply to Alex about the toggle behaviour

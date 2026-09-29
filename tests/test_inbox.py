@@ -195,6 +195,11 @@ class StoreTests(unittest.TestCase):
         self.assertTrue(out.strip().endswith("ok"), out)
         self.assertEqual(os.listdir(os.path.join(self.root, "items")), [])
 
+    def test_ask_kind_is_accepted(self):
+        out = run(self.root, "add.py", "--json", stdin=json.dumps([item(1, kind="ask", actor="Alex")])).stdout
+        self.assertTrue(out.startswith("created"), out)
+        self.assertEqual(run(self.root, "list.py", "--kind", "ask", "--ids").stdout.split(), [item(1)["id"]])
+
     def test_bad_input_is_rejected(self):
         for bad in (item(1, id="jira:1"), item(1, kind="nope"), item(1, status="drafted"),
                     item(1, created_at="yesterday"), {"id": "slack:C1/1"}):

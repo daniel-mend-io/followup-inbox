@@ -115,9 +115,9 @@ This turns your settings into three ready-made instructions in a folder called
 
 > install the routines from rendered/manifest.json
 
-It creates three scheduled routines for you: two that look for promises
-(morning and midday, then evening) and one that looks for threads that went
-quiet. You can also do it by hand at https://claude.ai/code/routines: new
+It creates three scheduled routines for you: two that look for promises you
+made (morning and midday, then evening) and one that looks for things people
+asked of you and threads that went quiet. You can also do it by hand at https://claude.ai/code/routines: new
 routine, paste the text of one rendered file, set its schedule from
 `rendered/manifest.json`, attach Slack, add `my-inbox` as the repository.
 

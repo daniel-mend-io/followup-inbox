@@ -99,7 +99,7 @@ routines:
     end_of_day: true
     stale_days: 7                  # flag items waiting longer than this
 
-  - name: loose-threads
+  - name: loose-threads                # asks made of you + threads that went quiet
     template: loose-threads
     cron: "40 6,14 * * *"
     connectors: [Slack, Atlassian]
