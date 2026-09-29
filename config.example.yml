@@ -17,7 +17,8 @@ user:
 
 timezone: Europe/Warsaw            # IANA name. Crons below are UTC and do NOT follow DST.
 working_hours: "09:00-18:00"       # local; routines treat time outside as quiet
-internal_email_domain: example.com # calendar attendees outside this domain are external
+internal_email_domains:            # calendar attendees outside these are external. List every
+  - example.com                    # domain your company uses, including legacy ones.
 
 # ---- where the store lives ---------------------------------------------------
 # Two-repo layout (recommended): this file, items/ and archive/ live in your
@@ -72,6 +73,7 @@ calendar:
 colleague:
   name: Sam Lee
   email: sam@example.com
+  aliases: []                      # other addresses they appear under in invites (legacy domains)
   slack_id: U1111111111
   timezone: Europe/Amsterdam
   description: Director of Product

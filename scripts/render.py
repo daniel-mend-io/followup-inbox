@@ -65,6 +65,12 @@ def build_context(config, routine):
     r.setdefault("stale_days", 7)
     ctx["routine"] = r
     ctx["today"] = now_utc().astimezone(tz).strftime("%Y-%m-%d")
+    # accept the older singular key
+    domains = config.get("internal_email_domains") or ([config["internal_email_domain"]] if config.get("internal_email_domain") else [])
+    ctx["internal_email_domains"] = domains
+    col = dict(config.get("colleague") or {})
+    col["all_emails"] = [e for e in [col.get("email")] + list(col.get("aliases") or []) if e]
+    ctx["colleague"] = col
     module_path = str(config.get("module_path") or "").strip("/ ")
     ctx["module_path"] = module_path
     ctx["scripts"] = f"python3 {module_path}/scripts" if module_path else "python3 scripts"

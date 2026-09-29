@@ -20,9 +20,9 @@ A meeting whose id is in that set is never flagged again, whatever its status. T
 
 List the user's calendar events from now through {{calendar.horizon_days}} days ahead. You are looking for two things:
 
-**Customer calls**: a meeting with at least one attendee whose email domain is not `{{internal_email_domain}}`. The external domain usually names the customer. Judge what it is: a scheduled call, demo, QBR, POC review, kickoff, escalation or working session with a customer counts.
+**Customer calls**: a meeting with at least one attendee whose email domain is none of: {{internal_email_domains|list}} (all of these are the user's own company; treat them as internal). Meeting-room resources and calendar system addresses are not attendees. The external domain usually names the customer. Judge what it is: a scheduled call, demo, QBR, POC review, kickoff, escalation or working session with a customer counts.
 
-**Customer call prep**: internal meetings (everyone on `{{internal_email_domain}}`) whose title or description shows they exist to prepare for a specific customer call: "prep", "pre-call", "dry run", "internal sync before X", and similar, where a customer is named.
+**Customer call prep**: internal meetings (everyone on an internal domain) whose title or description shows they exist to prepare for a specific customer call: "prep", "pre-call", "dry run", "internal sync before X", and similar, where a customer is named.
 
 Leave out, even when an external domain is present:
 - Recruiting, interviews and candidate calls
@@ -36,7 +36,7 @@ When you genuinely cannot tell whether something is a customer call, include it 
 
 ## 3. Check whether the colleague is on it
 
-For each candidate, look at the attendee list for `{{colleague.email}}`. They count as part of the call if they are invited at all, whatever their response status, with one exception: if they were invited and declined, skip it; they already know and chose not to go.
+For each candidate, look at the attendee list for any of: {{colleague.all_emails|list}} (the colleague may appear under more than one address; match on any). They count as part of the call if they are invited at all, whatever their response status, with one exception: if they were invited and declined, skip it; they already know and chose not to go.
 
 What is left is the list to tell them about. If it is empty, stop: do not commit, do not notify. Silence is the correct output for a quiet run.
 

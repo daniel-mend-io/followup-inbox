@@ -179,6 +179,7 @@ class StoreTests(unittest.TestCase):
         self.assertIn("Read `tool/SKILL.md`", prompt)
         self.assertIn("--min-age 7", prompt)           # end_of_day block rendered
         self.assertNotIn("{{", prompt)
+        run(self.root, "render.py", "--stdout", "customer-calls")   # disabled in example, still renders on request
         with open(os.path.join(self.root, "rendered", "commitments-morning-midday.md")) as f:
             morning = f.read()
         self.assertNotIn("{{", morning)
