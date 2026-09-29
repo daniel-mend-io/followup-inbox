@@ -40,6 +40,7 @@ EFFORT_SORTS = ("status", "due", "touched", "kind", "title")
 EFFORT_FILTERS = ("open", "suggested", "active", "paused", "all")
 
 SOURCE_GLYPH = {"slack": "#", "jira": "◆", "email": "✉", "calendar": "▣"}
+SOURCE_LABEL = {"slack": "slack", "jira": "jira", "email": "email", "calendar": "cal"}
 STATUS_GLYPH = {"ready": "●", "waiting": "◐", "new": "○", "done": "✓", "dismissed": "×",
                 "suggested": "○", "active": "●", "paused": "◐", "dropped": "×"}
 KIND_LABEL = {"commitment": "promise", "ask": "ask", "needs_reply": "reply", "loose_thread": "thread", "fyi": "fyi"}
@@ -335,7 +336,7 @@ class App:
         side_by_side = w >= 100
         top, bottom = 2, h - 2
         if side_by_side:
-            lw = max(44, min(int(w * 0.42), 72))
+            lw = max(52, min(int(w * 0.45), 80))
             self.draw_list(top, 0, bottom - top, lw, rows)
             self.draw_detail(top, lw + 1, bottom - top, w - lw - 1)
         else:
@@ -368,7 +369,8 @@ class App:
         self.put(0, w - len(clock) - 1, clock, t.a("bar", c.A_BOLD))
         # sub-header: sort / filter
         if self.screen == 1:
-            sub = f"sort {INBOX_SORTS[self.sort[1]]}{' ↓' if self.rev[1] else ''}   filter {INBOX_FILTERS[self.filt[1]]}"
+            sub = (f"  {'src':<7} {'kind':<7} {'age':>3} {'who':<12} title            "
+                   f"sort {INBOX_SORTS[self.sort[1]]}{' ↓' if self.rev[1] else ''}   filter {INBOX_FILTERS[self.filt[1]]}")
         elif self.screen == 2:
             sub = f"sort {EFFORT_SORTS[self.sort[2]]}{' ↓' if self.rev[2] else ''}   filter {EFFORT_FILTERS[self.filt[2]]}"
         else:
@@ -402,18 +404,19 @@ class App:
         c, t = self.t.c, self.t
         st = it.get("status", "")
         self.put(y, x, STATUS_GLYPH.get(st, "?"), (base if selected else 0) | (t.status_attr(st) if not selected else c.A_BOLD))
-        self.put(y, x + 2, SOURCE_GLYPH.get(it.get("source"), "?"), base | t.a("dim"))
+        src = it.get("source") or ""
+        self.put(y, x + 2, f"{SOURCE_GLYPH.get(src, '?')} {SOURCE_LABEL.get(src, src)[:5]:<5}", base | t.a("dim"))
         kind = KIND_LABEL.get(it.get("kind"), it.get("kind", ""))[:7]
-        self.put(y, x + 4, f"{kind:<7}", base | (t.a("kind_" + str(it.get("kind"))) if not selected else c.A_BOLD))
-        self.put(y, x + 12, f"{fmt_age(it['created_at']):>3}", base | t.a("dim"))
+        self.put(y, x + 10, f"{kind:<7}", base | (t.a("kind_" + str(it.get("kind"))) if not selected else c.A_BOLD))
+        self.put(y, x + 18, f"{fmt_age(it['created_at']):>3}", base | t.a("dim"))
         who = (it.get("actor") or "").split(",")[0].split(" (")[0][:12]
-        self.put(y, x + 16, f"{who:<12}", base | (t.a("accent") if not selected else 0))
-        title_w = w - 30
+        self.put(y, x + 22, f"{who:<12}", base | (t.a("accent") if not selected else 0))
+        title_w = w - 36
         title = it.get("title") or ""
         if it.get("proposed_reply"):
             self.put(y, x + w - 1, t.g("✎", "*"), base | t.a("reply", c.A_BOLD))
             title_w -= 2
-        self.put(y, x + 29, title[:title_w], base | (c.A_BOLD if selected else 0), title_w)
+        self.put(y, x + 35, title[:title_w], base | (c.A_BOLD if selected else 0), title_w)
 
     def draw_effort_row(self, y, x, w, e, base, selected):
         c, t = self.t.c, self.t
