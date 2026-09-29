@@ -430,8 +430,13 @@ def check():
     config = load_config()
     items = load_all(include_archive=True)
     efforts = load_efforts(include_closed=True)
+    lastwrite = {}
+    for r in config.get("routines") or []:
+        t = r.get("template", "")
+        if t and t not in lastwrite:
+            lastwrite[t] = last_store_write(t)
     print("== Routines ==")
-    for r in routine_rows(config, routine_ids_from_state(), {}):
+    for r in routine_rows(config, routine_ids_from_state(), lastwrite):
         print(routine_line(r, 140))
     print("== Inbox (open, newest first) ==")
     for it in inbox_rows(items):
