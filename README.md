@@ -27,7 +27,7 @@ followup-inbox/            the module — public, no personal data ever
   SKILL.md                 the agent-facing contract for the scripts
   config.example.yml       people, channels, hours, timezone, schedules
   scripts/                 add | list | status | draft | digest | sync | verify | render | efforts | tui
-  routines/                one prompt template per routine, rendered from config
+  routines/                one prompt template per routine (Slack, Jira, Gmail, efforts, calendar)
   state/                   operational notes, memory-file shaped (index + DST caveat)
   tests/                   python3 -m unittest discover -s tests
 

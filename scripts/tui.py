@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""Terminal UI over the store. Stdlib only (curses).
+"""Terminal UI over the store. Stdlib only (curses). List on the left, detail on the right.
 
 Usage:
   ./tui.py                # opens on the Inbox screen
   ./tui.py --check        # no curses: print what each screen would show, then exit
 
-Screens (switch with the number keys, Tab / Shift-Tab):
+Screens (number keys, Tab / Shift-Tab):
   0  Routines   what is scheduled, when it fires locally today, when it last wrote
-  1  Inbox      every open item, sortable; expand, triage, copy the draft
-  2  Efforts    everything you have to keep in your head; accept suggestions, set next actions
+  1  Inbox      every open item, sortable; detail pane, triage, copy the draft
+  2  Efforts    what you carry; accept suggestions, set next actions
 
-Keys (all screens): j/k or arrows move, Enter expands, s sort, S reverse, f filter,
-R reload, g git sync, o open link, e edit file in $EDITOR, ? help, q quit.
+Keys (all screens): j/k or arrows move, J/K or PgDn/PgUp scroll the detail, s sort,
+S reverse, f filter, m status menu, R reload, g git sync, o open link, e edit in $EDITOR,
+? help, q quit.
 Inbox:   d done   x dismiss   r ready   w waiting   n reopen   y copy proposed reply
 Efforts: a add    A accept    n next action   N note   p pause/resume   d done   x drop
 """
 
 import argparse
 import datetime as dt
-import json
+import locale
 import os
 import re
 import shutil
@@ -31,11 +32,17 @@ from _inbox_common import (EFFORT_STATUSES, OPEN_STATUSES, REPO_ROOT, STATUSES, 
 
 SCRIPTS = os.path.dirname(os.path.abspath(__file__))
 STATE_IDS = os.path.join(REPO_ROOT, "state", "routine-ids.md")
+RENDERED = os.path.join(REPO_ROOT, "rendered")
 
 INBOX_SORTS = ("newest", "oldest", "status", "source", "kind", "actor", "age")
 INBOX_FILTERS = ("open", "ready", "waiting", "new", "all")
 EFFORT_SORTS = ("status", "due", "touched", "kind", "title")
 EFFORT_FILTERS = ("open", "suggested", "active", "paused", "all")
+
+SOURCE_GLYPH = {"slack": "#", "jira": "◆", "email": "✉", "calendar": "▣"}
+STATUS_GLYPH = {"ready": "●", "waiting": "◐", "new": "○", "done": "✓", "dismissed": "×",
+                "suggested": "○", "active": "●", "paused": "◐", "dropped": "×"}
+KIND_LABEL = {"commitment": "promise", "ask": "ask", "needs_reply": "reply", "loose_thread": "thread", "fyi": "fyi"}
 
 
 # ----------------------------------------------------------------------------
@@ -123,6 +130,15 @@ def last_store_write(prefix):
     return out or "-"
 
 
+def last_writes(config):
+    out = {}
+    for r in config.get("routines") or []:
+        t = r.get("template", "")
+        if t and t not in out:
+            out[t] = last_store_write(t)
+    return out
+
+
 def routine_rows(config, ids=None, lastwrite=None):
     from render import cron_local_times
     tz = local_zone(config)
@@ -132,7 +148,7 @@ def routine_rows(config, ids=None, lastwrite=None):
         name = r.get("name", "?")
         tmpl = r.get("template", "")
         rows.append({
-            "name": name,
+            "name": name, "template": tmpl,
             "enabled": r.get("enabled", True) is not False,
             "cron": r.get("cron", ""),
             "local": cron_local_times(r.get("cron", ""), tz),
@@ -148,21 +164,11 @@ def routine_line(r, width):
     return (f"{flag:<3} {r['name']:<28} {r['cron']:<16} today {r['local']:<20} last wrote {r['last_write']:<10} {r['connectors']}")[:width]
 
 
-def detail_text(rec, section_title, section_key, width):
-    lines = []
-    for k, v in rec.items():
-        if k.startswith("_") or k in ("body", section_key) or v in (None, "", {}):
-            continue
-        lines.append(f"{k}: {v}")
-    lines.append("")
-    body = rec.get("body") or ""
-    for para in body.split("\n"):
-        lines.extend(textwrap.wrap(para, width - 2) or [""])
-    if rec.get(section_key):
-        lines += ["", section_title, ""]
-        for para in rec[section_key].split("\n"):
-            lines.extend(textwrap.wrap(para, width - 2) or [""])
-    return lines
+def wrap(text, width):
+    out = []
+    for para in (text or "").split("\n"):
+        out.extend(textwrap.wrap(para, max(8, width), break_long_words=True, break_on_hyphens=False) or [""])
+    return out
 
 
 # ----------------------------------------------------------------------------
@@ -193,17 +199,77 @@ def open_url(url):
 # The curses app
 # ----------------------------------------------------------------------------
 
+class Theme:
+    """Color pairs. Falls back gracefully on terminals without 256 colors."""
+
+    def __init__(self):
+        import curses
+        self.c = curses
+        self.ok = curses.has_colors()
+        self.unicode = "utf" in (locale.getpreferredencoding(False) or "").lower()
+        if not self.ok:
+            self.pairs = {}
+            return
+        curses.start_color()
+        try:
+            curses.use_default_colors()
+        except curses.error:
+            pass
+        many = curses.COLORS >= 256
+        # name: (fg, bg)
+        spec = {
+            "bar":     (231 if many else curses.COLOR_WHITE, 24 if many else curses.COLOR_BLUE),
+            "tab_on":  (16 if many else curses.COLOR_BLACK, 75 if many else curses.COLOR_CYAN),
+            "accent":  (75 if many else curses.COLOR_CYAN, -1),
+            "dim":     (243 if many else curses.COLOR_WHITE, -1),
+            "ready":   (114 if many else curses.COLOR_GREEN, -1),
+            "waiting": (221 if many else curses.COLOR_YELLOW, -1),
+            "new":     (176 if many else curses.COLOR_MAGENTA, -1),
+            "closed":  (240 if many else curses.COLOR_WHITE, -1),
+            "sel":     (231 if many else curses.COLOR_WHITE, 237 if many else curses.COLOR_BLUE),
+            "reply":   (114 if many else curses.COLOR_GREEN, -1),
+            "kind_commitment": (117 if many else curses.COLOR_CYAN, -1),
+            "kind_ask":        (213 if many else curses.COLOR_MAGENTA, -1),
+            "kind_needs_reply": (222 if many else curses.COLOR_YELLOW, -1),
+            "kind_loose_thread": (111 if many else curses.COLOR_BLUE, -1),
+            "kind_fyi":        (245 if many else curses.COLOR_WHITE, -1),
+            "err":     (203 if many else curses.COLOR_RED, -1),
+            "msg":     (250 if many else curses.COLOR_WHITE, -1),
+        }
+        self.pairs = {}
+        for n, (name, (fg, bg)) in enumerate(spec.items(), start=1):
+            try:
+                curses.init_pair(n, fg, bg)
+                self.pairs[name] = curses.color_pair(n)
+            except curses.error:
+                self.pairs[name] = 0
+
+    def a(self, name, *extra):
+        attr = self.pairs.get(name, 0) if self.ok else 0
+        for e in extra:
+            attr |= e
+        return attr
+
+    def status_attr(self, status):
+        return self.a({"ready": "ready", "active": "ready", "waiting": "waiting", "paused": "waiting",
+                       "new": "new", "suggested": "new"}.get(status, "closed"))
+
+    def g(self, uni, ascii_):
+        return uni if self.unicode else ascii_
+
+
 class App:
     def __init__(self, stdscr):
         self.scr = stdscr
+        self.t = Theme()
         self.screen = 1
         self.sel = {0: 0, 1: 0, 2: 0}
-        self.expanded = False
         self.detail_off = 0
         self.sort = {1: 0, 2: 0}
         self.rev = {1: False, 2: False}
         self.filt = {1: 0, 2: 0}
-        self.msg = "?: help"
+        self.msg = ""
+        self.msg_err = False
         self.config = load_config()
         self.reload()
 
@@ -211,13 +277,7 @@ class App:
     def reload(self):
         self.items = load_all(include_archive=True)
         self.efforts = load_efforts(include_closed=True)
-        ids = routine_ids_from_state()
-        lastwrite = {}
-        for r in self.config.get("routines") or []:
-            t = r.get("template", "")
-            if t and t not in lastwrite:
-                lastwrite[t] = last_store_write(t)
-        self.routines = routine_rows(self.config, ids, lastwrite)
+        self.routines = routine_rows(self.config, routine_ids_from_state(), last_writes(self.config))
 
     def rows(self):
         if self.screen == 1:
@@ -233,123 +293,371 @@ class App:
         self.sel[self.screen] = max(0, min(self.sel[self.screen], len(rows) - 1))
         return rows[self.sel[self.screen]]
 
-    # drawing ----------------------------------------------------------------
+    def say(self, text, err=False):
+        self.msg, self.msg_err = text, err
+
+    # low-level drawing --------------------------------------------------------
+    def put(self, y, x, text, attr=0, maxw=None):
+        h, w = self.scr.getmaxyx()
+        if y < 0 or y >= h or x >= w:
+            return
+        maxw = w - x if maxw is None else min(maxw, w - x)
+        if maxw <= 0:
+            return
+        try:
+            self.scr.addnstr(y, x, text, maxw, attr)
+        except self.t.c.error:
+            pass
+
+    def fill(self, y, x, width, attr):
+        self.put(y, x, " " * max(0, width), attr)
+
+    def box(self, y, x, h, w, title="", attr=0):
+        t = self.t
+        tl, tr, bl, br = t.g("╭", "+"), t.g("╮", "+"), t.g("╰", "+"), t.g("╯", "+")
+        hz, vt = t.g("─", "-"), t.g("│", "|")
+        self.put(y, x, tl + hz * (w - 2) + tr, attr)
+        for yy in range(y + 1, y + h - 1):
+            self.put(yy, x, vt, attr)
+            self.put(yy, x + w - 1, vt, attr)
+        self.put(y + h - 1, x, bl + hz * (w - 2) + br, attr)
+        if title:
+            self.put(y, x + 2, f" {title} ", attr | self.t.c.A_BOLD)
+
+    # screens -------------------------------------------------------------------
     def draw(self):
-        import curses
+        c = self.t.c
         scr = self.scr
         scr.erase()
         h, w = scr.getmaxyx()
-        tabs = "  ".join(("[%d %s]" if n == self.screen else " %d %s ") % (n, t)
-                         for n, t in enumerate(("Routines", "Inbox", "Efforts")))
-        scr.addnstr(0, 0, tabs, w - 1, curses.A_BOLD)
-        if self.screen == 1:
-            hdr = f"sort:{INBOX_SORTS[self.sort[1]]}{' desc' if self.rev[1] else ''}  filter:{INBOX_FILTERS[self.filt[1]]}"
-            cols = f"{'status':<8} {'source':<8} {'kind':<12} {'age':>4} * {'who':<16}  title"
-        elif self.screen == 2:
-            hdr = f"sort:{EFFORT_SORTS[self.sort[2]]}{' desc' if self.rev[2] else ''}  filter:{EFFORT_FILTERS[self.filt[2]]}"
-            cols = f"{'status':<9} {'kind':<12} {'due':<10} {'touched':<10} title / next action (* = suggested)"
-        else:
-            hdr = "crons are UTC; 'today' is the local firing time; 'last wrote' is the newest store commit from that scanner"
-            cols = f"{'':<3} {'routine':<28} {'cron (UTC)':<16} {'today':<26} {'last wrote':<21} connectors"
-        scr.addnstr(0, max(0, w - len(hdr) - 1), hdr, w - 1)
-        scr.addnstr(1, 0, cols, w - 1, curses.A_UNDERLINE)
-
+        self.draw_header(w)
         rows = self.rows()
-        list_h = (h - 3) // 2 if self.expanded else h - 3
-        top = max(0, self.sel[self.screen] - list_h + 1)
-        for n, row in enumerate(rows[top: top + list_h]):
-            y = 2 + n
-            if self.screen == 1:
-                line = inbox_line(row, w - 1)
-            elif self.screen == 2:
-                line = effort_line(row, w - 1)
-            else:
-                line = routine_line(row, w - 1)
-            attr = curses.A_REVERSE if top + n == self.sel[self.screen] else curses.A_NORMAL
-            scr.addnstr(y, 0, line.ljust(w - 1), w - 1, attr)
-        if not rows:
-            scr.addnstr(2, 0, "(nothing here)", w - 1)
-
-        if self.expanded and rows:
-            cur = self.current()
-            y0 = 2 + list_h
-            scr.hline(y0, 0, "-", w - 1)
-            if self.screen == 1:
-                lines = detail_text(cur, "## Proposed reply", "proposed_reply", w)
-            elif self.screen == 2:
-                lines = detail_text(cur, "## Suggested next action", "suggestion", w)
-            else:
-                lines = [f"{k}: {v}" for k, v in cur.items()]
-            avail = h - y0 - 2
-            self.detail_off = max(0, min(self.detail_off, max(0, len(lines) - avail)))
-            for n, line in enumerate(lines[self.detail_off: self.detail_off + avail]):
-                scr.addnstr(y0 + 1 + n, 1, line, w - 2)
-        scr.addnstr(h - 1, 0, self.msg[: w - 1], w - 1, curses.A_DIM)
+        side_by_side = w >= 100
+        top, bottom = 2, h - 2
+        if side_by_side:
+            lw = max(44, min(int(w * 0.42), 72))
+            self.draw_list(top, 0, bottom - top, lw, rows)
+            self.draw_detail(top, lw + 1, bottom - top, w - lw - 1)
+        else:
+            lh = max(5, (bottom - top) // 2)
+            self.draw_list(top, 0, lh, w, rows)
+            self.draw_detail(top + lh, 0, bottom - top - lh, w)
+        self.draw_footer(h, w)
         scr.refresh()
 
+    def draw_header(self, w):
+        c = self.t.c
+        t = self.t
+        self.fill(0, 0, w, t.a("bar"))
+        self.put(0, 1, t.g("☰", "=") + " followup-inbox", t.a("bar", c.A_BOLD))
+        x = 20
+        for n, name in enumerate(("Routines", "Inbox", "Efforts")):
+            label = f" {n} {name} "
+            attr = t.a("tab_on", c.A_BOLD) if n == self.screen else t.a("bar")
+            self.put(0, x, label, attr)
+            x += len(label) + 1
+        open_items = [i for i in self.items if i.get("status") in OPEN_STATUSES]
+        counts = {s: sum(1 for i in open_items if i["status"] == s) for s in ("ready", "waiting", "new")}
+        drafts = sum(1 for i in open_items if i.get("proposed_reply"))
+        sugg = sum(1 for e in self.efforts if e.get("status") == "suggested")
+        right = (f"{counts['ready']} ready {t.g('·', '|')} {counts['waiting']} waiting {t.g('·', '|')} "
+                 f"{counts['new']} new {t.g('·', '|')} {drafts} drafts {t.g('·', '|')} {sugg} suggested efforts")
+        tz = local_zone(self.config)
+        clock = now_utc().astimezone(tz).strftime("%a %d %b %H:%M")
+        self.put(0, max(x + 2, w - len(right) - len(clock) - 4), right, t.a("bar"))
+        self.put(0, w - len(clock) - 1, clock, t.a("bar", c.A_BOLD))
+        # sub-header: sort / filter
+        if self.screen == 1:
+            sub = f"sort {INBOX_SORTS[self.sort[1]]}{' ↓' if self.rev[1] else ''}   filter {INBOX_FILTERS[self.filt[1]]}"
+        elif self.screen == 2:
+            sub = f"sort {EFFORT_SORTS[self.sort[2]]}{' ↓' if self.rev[2] else ''}   filter {EFFORT_FILTERS[self.filt[2]]}"
+        else:
+            sub = "crons are UTC; 'today' is the local firing time; 'last wrote' is the newest store commit from that scanner"
+        self.put(1, 1, sub, t.a("dim"))
+
+    def draw_list(self, y, x, h, w, rows):
+        c, t = self.t.c, self.t
+        if not rows:
+            self.put(y + 1, x + 2, "nothing here", t.a("dim", c.A_ITALIC if hasattr(c, "A_ITALIC") else 0))
+            return
+        top = max(0, self.sel[self.screen] - h + 1)
+        for n, row in enumerate(rows[top: top + h]):
+            yy = y + n
+            selected = top + n == self.sel[self.screen]
+            base = t.a("sel") if selected else 0
+            self.fill(yy, x, w, base)
+            marker = t.g("▌", ">") if selected else " "
+            self.put(yy, x, marker, t.a("accent", c.A_BOLD) if selected else 0)
+            if self.screen == 1:
+                self.draw_inbox_row(yy, x + 2, w - 3, row, base, selected)
+            elif self.screen == 2:
+                self.draw_effort_row(yy, x + 2, w - 3, row, base, selected)
+            else:
+                self.draw_routine_row(yy, x + 2, w - 3, row, base, selected)
+        if len(rows) > h:
+            pos = f"{self.sel[self.screen] + 1}/{len(rows)}"
+            self.put(y + h - 1, x + w - len(pos) - 1, pos, t.a("dim"))
+
+    def draw_inbox_row(self, y, x, w, it, base, selected):
+        c, t = self.t.c, self.t
+        st = it.get("status", "")
+        self.put(y, x, STATUS_GLYPH.get(st, "?"), (base if selected else 0) | (t.status_attr(st) if not selected else c.A_BOLD))
+        self.put(y, x + 2, SOURCE_GLYPH.get(it.get("source"), "?"), base | t.a("dim"))
+        kind = KIND_LABEL.get(it.get("kind"), it.get("kind", ""))[:7]
+        self.put(y, x + 4, f"{kind:<7}", base | (t.a("kind_" + str(it.get("kind"))) if not selected else c.A_BOLD))
+        self.put(y, x + 12, f"{fmt_age(it['created_at']):>3}", base | t.a("dim"))
+        who = (it.get("actor") or "").split(",")[0].split(" (")[0][:12]
+        self.put(y, x + 16, f"{who:<12}", base | (t.a("accent") if not selected else 0))
+        title_w = w - 30
+        title = it.get("title") or ""
+        if it.get("proposed_reply"):
+            self.put(y, x + w - 1, t.g("✎", "*"), base | t.a("reply", c.A_BOLD))
+            title_w -= 2
+        self.put(y, x + 29, title[:title_w], base | (c.A_BOLD if selected else 0), title_w)
+
+    def draw_effort_row(self, y, x, w, e, base, selected):
+        c, t = self.t.c, self.t
+        st = e.get("status", "")
+        self.put(y, x, STATUS_GLYPH.get(st, "?"), base | (t.status_attr(st) if not selected else c.A_BOLD))
+        self.put(y, x + 2, f"{(e.get('kind') or '')[:9]:<9}", base | t.a("dim"))
+        due = str(e.get("next_action_due") or "")[5:10]
+        self.put(y, x + 12, f"{due:<5}", base | (t.a("waiting") if due else 0))
+        title_w = w - 20
+        title = e.get("title") or ""
+        if not e.get("next_action") and e.get("suggestion"):
+            self.put(y, x + w - 1, t.g("✦", "*"), base | t.a("new", c.A_BOLD))
+            title_w -= 2
+        self.put(y, x + 18, title[:title_w], base | (c.A_BOLD if selected else 0), title_w)
+
+    def draw_routine_row(self, y, x, w, r, base, selected):
+        c, t = self.t.c, self.t
+        self.put(y, x, t.g("●", "*") if r["enabled"] else t.g("○", "o"), base | (t.a("ready") if r["enabled"] else t.a("closed")))
+        self.put(y, x + 2, f"{r['name'][:26]:<26}", base | (c.A_BOLD if selected else 0))
+        self.put(y, x + 29, f"today {r['local']}"[: w - 30], base | t.a("dim"))
+
+    def draw_detail(self, y, x, h, w):
+        c, t = self.t.c, self.t
+        cur = self.current()
+        if cur is None:
+            return
+        if self.screen == 1:
+            title = f"{cur.get('source')} {t.g('·', '/')} {KIND_LABEL.get(cur.get('kind'), cur.get('kind'))}"
+        elif self.screen == 2:
+            title = f"effort {t.g('·', '/')} {cur.get('kind')}"
+        else:
+            title = "routine"
+        self.box(y, x, h, w, title, t.a("dim"))
+        inner_w = w - 4
+        lines = self.detail_lines(cur, inner_w)
+        avail = h - 2
+        self.detail_off = max(0, min(self.detail_off, max(0, len(lines) - avail)))
+        for n, (text, attr) in enumerate(lines[self.detail_off: self.detail_off + avail]):
+            self.put(y + 1 + n, x + 2, text, attr, inner_w)
+        if len(lines) > avail:
+            pct = f" {min(100, int(100 * (self.detail_off + avail) / len(lines)))}% "
+            self.put(y + h - 1, x + w - len(pct) - 2, pct, t.a("dim"))
+
+    def detail_lines(self, cur, w):
+        """[(text, attr)] for the right pane."""
+        c, t = self.t.c, self.t
+        L = []
+        bold = c.A_BOLD
+        if self.screen == 1:
+            for ln in wrap(cur.get("title", ""), w):
+                L.append((ln, bold))
+            L.append(("", 0))
+            st = cur.get("status", "")
+            L.append((f"{STATUS_GLYPH.get(st, '?')} {st}", t.status_attr(st) | bold))
+            tz = local_zone(self.config)
+            created = parse_ts(cur["created_at"]).astimezone(tz).strftime("%a %d %b %Y %H:%M")
+            meta = [("who", cur.get("actor")), ("trigger", cur.get("trigger")),
+                    ("created", f"{created}  ({fmt_age(cur['created_at'])} ago)"), ("id", cur.get("id")),
+                    ("link", cur.get("url"))]
+            for k, v in meta:
+                if v:
+                    for n, ln in enumerate(wrap(str(v), w - 10)):
+                        L.append(((f"{k:<8}" if n == 0 else " " * 8) + "  " + ln, t.a("dim") if n else 0))
+            L.append(("", 0))
+            L.append((t.g("─", "-") * w, t.a("dim")))
+            for ln in wrap(cur.get("body") or "(no detail)", w):
+                L.append((ln, 0))
+            if cur.get("proposed_reply"):
+                L.append(("", 0))
+                L.append((f"{t.g('✎', '*')} proposed reply   (y to copy)", t.a("reply", bold)))
+                L.append((t.g("─", "-") * w, t.a("reply")))
+                for ln in wrap(cur["proposed_reply"], w - 2):
+                    L.append((t.g("┃ ", "| ") + ln, t.a("reply")))
+        elif self.screen == 2:
+            for ln in wrap(cur.get("title", ""), w):
+                L.append((ln, bold))
+            L.append(("", 0))
+            st = cur.get("status", "")
+            L.append((f"{STATUS_GLYPH.get(st, '?')} {st}", t.status_attr(st) | bold))
+            meta = [("next", cur.get("next_action")), ("due", cur.get("next_action_due")),
+                    ("touched", cur.get("last_touched")), ("id", cur.get("id")), ("link", cur.get("url"))]
+            for k, v in meta:
+                if v:
+                    for n, ln in enumerate(wrap(str(v), w - 10)):
+                        L.append(((f"{k:<8}" if n == 0 else " " * 8) + "  " + ln, t.a("dim") if n else 0))
+            if cur.get("suggestion"):
+                L.append(("", 0))
+                L.append((f"{t.g('✦', '*')} suggested next action   (A to accept, n to set your own)", t.a("new", bold)))
+                L.append((t.g("─", "-") * w, t.a("new")))
+                for ln in wrap(cur["suggestion"], w - 2):
+                    L.append((t.g("┃ ", "| ") + ln, t.a("new")))
+            if cur.get("body"):
+                L.append(("", 0))
+                L.append((t.g("─", "-") * w, t.a("dim")))
+                for ln in wrap(cur["body"], w):
+                    L.append((ln, 0))
+        else:
+            L.append((cur["name"], bold))
+            L.append(("", 0))
+            meta = [("enabled", "yes" if cur["enabled"] else "no"), ("cron", f"{cur['cron']}  (UTC)"),
+                    ("today", cur["local"]), ("last wrote", cur["last_write"]), ("connectors", cur["connectors"]),
+                    ("template", f"routines/{cur['template']}.md"), ("routine id", cur["id"])]
+            for k, v in meta:
+                L.append((f"{k:<11}  {v}", 0))
+            path = os.path.join(RENDERED, cur["name"] + ".md")
+            if os.path.exists(path):
+                L.append(("", 0))
+                L.append((f"rendered prompt  {rel(path)}", t.a("dim")))
+                L.append((t.g("─", "-") * w, t.a("dim")))
+                with open(path, encoding="utf-8") as f:
+                    for ln in wrap(f.read(), w):
+                        L.append((ln, t.a("dim")))
+            else:
+                L.append(("", 0))
+                L.append(("not rendered yet: python3 tool/scripts/render.py", t.a("dim")))
+        return L
+
+    def draw_footer(self, h, w):
+        c, t = self.t.c, self.t
+        if self.screen == 1:
+            keys = [("d", "done"), ("x", "dismiss"), ("r", "ready"), ("w", "waiting"), ("m", "status…"),
+                    ("y", "copy draft"), ("o", "open"), ("e", "edit"), ("s", "sort"), ("f", "filter"), ("g", "sync"), ("?", "help")]
+        elif self.screen == 2:
+            keys = [("A", "accept"), ("n", "next"), ("N", "note"), ("a", "add"), ("p", "pause"), ("d", "done"),
+                    ("x", "drop"), ("o", "open"), ("e", "edit"), ("s", "sort"), ("f", "filter"), ("g", "sync")]
+        else:
+            keys = [("o", "routines page"), ("R", "reload"), ("q", "quit")]
+        x = 1
+        for k, label in keys:
+            self.put(h - 2, x, f" {k} ", t.a("tab_on", c.A_BOLD))
+            self.put(h - 2, x + 3, f" {label}  ", t.a("dim"))
+            x += 5 + len(label)
+            if x > w - 12:
+                break
+        if self.msg:
+            self.put(h - 1, 1, self.msg, t.a("err" if self.msg_err else "msg"), w - 2)
+
+    # input --------------------------------------------------------------------
     def prompt(self, label, default=""):
-        import curses
+        c = self.t.c
         h, w = self.scr.getmaxyx()
-        self.scr.addnstr(h - 1, 0, (label + " ").ljust(w - 1), w - 1)
+        self.fill(h - 1, 0, w, self.t.a("sel"))
+        self.put(h - 1, 1, label + " ", self.t.a("sel", c.A_BOLD))
+        if default:
+            self.put(h - 1, len(label) + 2, f"[{default}] ", self.t.a("sel"))
         self.scr.refresh()
-        curses.echo()
-        curses.curs_set(1)
+        c.echo()
+        c.curs_set(1)
         try:
-            raw = self.scr.getstr(h - 1, min(len(label) + 1, w - 2), 500)
+            raw = self.scr.getstr(h - 1, min(len(label) + 2 + (len(default) + 3 if default else 0), w - 2), 500)
         except KeyboardInterrupt:
             raw = b""
         finally:
-            curses.noecho()
-            curses.curs_set(0)
+            c.noecho()
+            c.curs_set(0)
         text = raw.decode("utf-8", "replace").strip()
         return text or default
 
+    def pick(self, title, options, current=None):
+        """Modal list picker; returns the chosen option or None."""
+        c, t = self.t.c, self.t
+        h, w = self.scr.getmaxyx()
+        bw = max(len(title) + 6, max(len(o) for o in options) + 8)
+        bh = len(options) + 2
+        y, x = max(1, (h - bh) // 2), max(0, (w - bw) // 2)
+        idx = options.index(current) if current in options else 0
+        while True:
+            self.box(y, x, bh, bw, title, t.a("accent"))
+            for n, o in enumerate(options):
+                attr = t.a("sel", c.A_BOLD) if n == idx else 0
+                self.fill(y + 1 + n, x + 1, bw - 2, attr)
+                self.put(y + 1 + n, x + 2, f"{STATUS_GLYPH.get(o, ' ')} {o}", attr | (0 if n == idx else t.status_attr(o)))
+            self.scr.refresh()
+            ch = self.scr.getch()
+            if ch in (ord("q"), 27):
+                return None
+            if ch in (ord("j"), c.KEY_DOWN):
+                idx = (idx + 1) % len(options)
+            elif ch in (ord("k"), c.KEY_UP):
+                idx = (idx - 1) % len(options)
+            elif ch in (10, 13, c.KEY_ENTER):
+                return options[idx]
+            elif 0 <= ch < 256 and chr(ch) in "".join(o[0] for o in options):
+                for o in options:
+                    if o[0] == chr(ch):
+                        return o
+
     def edit_in_editor(self, path):
-        import curses
+        c = self.t.c
         editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
-        curses.endwin()
+        c.endwin()
         subprocess.call([editor, path])
         self.scr.refresh()
         self.reload()
 
     def help(self):
-        self.msg = ("0/1/2 screens  j/k move  Enter expand  s/S sort  f filter  R reload  g sync  o open  e edit  q quit | "
-                    "Inbox: d done x dismiss r ready w waiting n reopen y copy | Efforts: a add A accept n next N note p pause d done x drop")
+        self.say("0/1/2 screens · j/k move · J/K scroll detail · Enter/m status menu · s/S sort · f filter · R reload · g sync · o open · e edit · q quit"
+                 "  |  Inbox: d done x dismiss r ready w waiting n reopen y copy  |  Efforts: a add A accept n next N note p pause d done x drop")
 
     # actions -----------------------------------------------------------------
+    def set_item_status(self, cur, new):
+        extra = ["--reopen"] if cur.get("status") in ("done", "dismissed") and new not in ("done", "dismissed") else []
+        ok, out = run_script("status.py", cur["id"], new, *extra)
+        self.say(out, not ok)
+        self.reload()
+
     def act(self, key):
         cur = self.current()
         if self.screen == 1 and cur:
-            item_id = cur["id"]
             if key in ("d", "x", "r", "w", "n"):
-                new = {"d": "done", "x": "dismissed", "r": "ready", "w": "waiting", "n": "new"}[key]
-                extra = ["--reopen"] if cur.get("status") in ("done", "dismissed") else []
-                ok, out = run_script("status.py", item_id, new, *extra)
-                self.msg = out
-                self.reload()
+                self.set_item_status(cur, {"d": "done", "x": "dismissed", "r": "ready", "w": "waiting", "n": "new"}[key])
+                return
+            if key == "m":
+                new = self.pick("set status", list(STATUSES), cur.get("status"))
+                if new and new != cur.get("status"):
+                    self.set_item_status(cur, new)
                 return
             if key == "y":
                 text = cur.get("proposed_reply") or ""
-                self.msg = "copied proposed reply" if text and copy_to_clipboard(text) else "no proposed reply on this item / no clipboard tool"
+                self.say("copied the proposed reply to the clipboard" if text and copy_to_clipboard(text)
+                         else "no proposed reply on this item, or no clipboard tool found", not text)
                 return
         if self.screen == 2:
             if key == "a":
                 title = self.prompt("title:")
                 if not title:
-                    self.msg = "cancelled"
+                    self.say("cancelled")
                     return
-                kind = self.prompt("kind (epic/customer/marketing/coordination/research/other):", "other")
+                kind = self.pick("kind", ["epic", "customer", "marketing", "coordination", "research", "other"]) or "other"
                 nxt = self.prompt("next action (optional):")
-                args = ["add", "--title", title, "--kind", kind] + (["--next", nxt] if nxt else [])
-                ok, out = run_script("efforts.py", *args)
-                self.msg = out
+                ok, out = run_script("efforts.py", "add", "--title", title, "--kind", kind, *(["--next", nxt] if nxt else []))
+                self.say(out, not ok)
                 self.reload()
                 return
-            if cur and key in ("A", "p", "d", "x"):
-                new = {"A": "active", "p": "active" if cur.get("status") == "paused" else "paused",
-                       "d": "done", "x": "dropped"}[key]
+            if cur and key in ("A", "p", "d", "x", "m"):
+                if key == "m":
+                    new = self.pick("set status", list(EFFORT_STATUSES), cur.get("status"))
+                    if not new or new == cur.get("status"):
+                        return
+                else:
+                    new = {"A": "active", "p": "active" if cur.get("status") == "paused" else "paused",
+                           "d": "done", "x": "dropped"}[key]
                 ok, out = run_script("efforts.py", "status", cur["id"], new)
-                self.msg = out
+                self.say(out, not ok)
                 self.reload()
                 return
             if cur and key == "n":
@@ -357,57 +665,63 @@ class App:
                 if text:
                     due = self.prompt("due (YYYY-MM-DD, optional):", cur.get("next_action_due") or "")
                     ok, out = run_script("efforts.py", "next", cur["id"], text, *(["--due", due] if due else []))
-                    self.msg = out
+                    self.say(out, not ok)
                     self.reload()
                 return
             if cur and key == "N":
                 text = self.prompt("note:")
                 if text:
                     ok, out = run_script("efforts.py", "note", cur["id"], text)
-                    self.msg = out
+                    self.say(out, not ok)
                     self.reload()
                 return
         if key == "g":
-            self.msg = "syncing…"
+            self.say("syncing…")
             self.draw()
             ok, out = run_script("sync.py", "-m", "triage", "items", "archive", "efforts", "INBOX.md")
-            self.msg = out
+            self.say(out, not ok)
             self.reload()
             return
         if key == "o":
             url = (cur or {}).get("url") if self.screen != 0 else "https://claude.ai/code/routines"
-            self.msg = "opened" if open_url(url) else "no url"
+            self.say("opened in the browser" if open_url(url) else "no link on this one", not url)
             return
         if key == "e" and cur and self.screen != 0:
             self.edit_in_editor(cur["_path"])
             return
-        self.msg = "?: help"
 
     # main loop --------------------------------------------------------------
     def run(self):
-        import curses
-        curses.curs_set(0)
+        c = self.t.c
+        c.curs_set(0)
+        self.scr.keypad(True)
         while True:
             self.draw()
             ch = self.scr.getch()
             if ch in (ord("q"), 27):
                 return
+            if ch == c.KEY_RESIZE:
+                continue
             if ch in (ord("0"), ord("1"), ord("2")):
-                self.screen = ch - ord("0"); self.expanded = False; self.detail_off = 0
+                self.screen = ch - ord("0"); self.detail_off = 0
             elif ch == 9:
-                self.screen = (self.screen + 1) % 3; self.expanded = False
-            elif ch == curses.KEY_BTAB:
-                self.screen = (self.screen - 1) % 3; self.expanded = False
-            elif ch in (ord("j"), curses.KEY_DOWN):
+                self.screen = (self.screen + 1) % 3; self.detail_off = 0
+            elif ch == c.KEY_BTAB:
+                self.screen = (self.screen - 1) % 3; self.detail_off = 0
+            elif ch in (ord("j"), c.KEY_DOWN):
                 self.sel[self.screen] += 1; self.detail_off = 0
-            elif ch in (ord("k"), curses.KEY_UP):
+            elif ch in (ord("k"), c.KEY_UP):
                 self.sel[self.screen] -= 1; self.detail_off = 0
-            elif ch == curses.KEY_NPAGE:
-                self.detail_off += 10
-            elif ch == curses.KEY_PPAGE:
-                self.detail_off = max(0, self.detail_off - 10)
-            elif ch in (10, 13, curses.KEY_ENTER):
-                self.expanded = not self.expanded; self.detail_off = 0
+            elif ch in (ord("J"), c.KEY_NPAGE):
+                self.detail_off += 5
+            elif ch in (ord("K"), c.KEY_PPAGE):
+                self.detail_off = max(0, self.detail_off - 5)
+            elif ch in (ord("G"), c.KEY_END):
+                self.sel[self.screen] = 10 ** 6
+            elif ch in (ord("g"),) and False:
+                pass
+            elif ch in (10, 13, c.KEY_ENTER):
+                self.act("m")
             elif ch == ord("s") and self.screen in self.sort:
                 n = len(INBOX_SORTS if self.screen == 1 else EFFORT_SORTS)
                 self.sort[self.screen] = (self.sort[self.screen] + 1) % n
@@ -417,7 +731,7 @@ class App:
                 n = len(INBOX_FILTERS if self.screen == 1 else EFFORT_FILTERS)
                 self.filt[self.screen] = (self.filt[self.screen] + 1) % n; self.sel[self.screen] = 0
             elif ch == ord("R"):
-                self.config = load_config(); self.reload(); self.msg = "reloaded"
+                self.config = load_config(); self.reload(); self.say("reloaded")
             elif ch == ord("?"):
                 self.help()
             elif 0 <= ch < 256:
@@ -430,13 +744,8 @@ def check():
     config = load_config()
     items = load_all(include_archive=True)
     efforts = load_efforts(include_closed=True)
-    lastwrite = {}
-    for r in config.get("routines") or []:
-        t = r.get("template", "")
-        if t and t not in lastwrite:
-            lastwrite[t] = last_store_write(t)
     print("== Routines ==")
-    for r in routine_rows(config, routine_ids_from_state(), lastwrite):
+    for r in routine_rows(config, routine_ids_from_state(), last_writes(config)):
         print(routine_line(r, 140))
     print("== Inbox (open, newest first) ==")
     for it in inbox_rows(items):
@@ -453,6 +762,7 @@ def main():
     if args.check:
         check()
         return
+    locale.setlocale(locale.LC_ALL, "")
     import curses
     try:
         curses.wrapper(lambda scr: App(scr).run())

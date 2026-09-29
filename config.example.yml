@@ -59,6 +59,23 @@ slack:
   exclude_channels:                # names or ids; announcements, bots, social
     - "#random"
 
+# ---- Jira (the jira-comments routine) ------------------------------------------
+jira:
+  lookback_days: 7
+  first_run_lookback_days: 30
+  include_projects: []             # project keys; empty = all you can see
+  exclude_projects: []
+
+# ---- Gmail (the gmail routine) --------------------------------------------------
+gmail:
+  lookback_days: 7
+  first_run_lookback_days: 21
+  include_labels: []               # empty = whole mailbox
+  exclude_senders:                 # addresses or domains never worth an item
+    - noreply
+    - no-reply
+    - notifications
+
 # ---- Calendar (only the customer-calls routine) -------------------------------
 calendar:
   horizon_days: 7
@@ -109,6 +126,16 @@ routines:
     template: loose-threads
     cron: "40 6,14 * * *"
     connectors: [Slack, Atlassian]
+
+  - name: jira-comments               # mentions, comments on your epics, handovers
+    template: jira-comments
+    cron: "50 6,13 * * 1-5"
+    connectors: [Atlassian, Slack]
+
+  - name: gmail                       # asks and promises in email (needs the Gmail connector)
+    template: gmail
+    cron: "55 6,13 * * 1-5"
+    connectors: [Gmail, Slack]
 
   - name: efforts                     # suggests efforts from the tracker, proposes next steps
     template: efforts

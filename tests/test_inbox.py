@@ -188,7 +188,11 @@ class StoreTests(unittest.TestCase):
         self.assertIn("If `sync.py` failed", morning)
         with open(os.path.join(self.root, "rendered", "manifest.json")) as f:
             names = [r["name"] for r in json.load(f)]
-        self.assertEqual(names, ["commitments-morning-midday", "commitments-evening", "loose-threads", "efforts"])
+        self.assertEqual(names, ["commitments-morning-midday", "commitments-evening", "loose-threads",
+                                 "jira-comments", "gmail", "efforts"])
+        for name in ("jira-comments", "gmail"):
+            with open(os.path.join(self.root, "rendered", name + ".md")) as f:
+                self.assertNotIn("{{", f.read())
         self.assertFalse(os.path.exists(os.path.join(MODULE, "routines", "rendered")))
 
     def test_verify_passes(self):

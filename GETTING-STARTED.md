@@ -115,10 +115,13 @@ This turns your settings into three ready-made instructions in a folder called
 
 > install the routines from rendered/manifest.json
 
-It creates four scheduled routines for you: two that look for promises you
-made (morning and midday, then evening), one that looks for things people
-asked of you and threads that went quiet, and one on weekday mornings that
-suggests efforts from your issue tracker and proposes a next step on each. You can also do it by hand at https://claude.ai/code/routines: new
+It creates six scheduled routines for you: two that look for promises you
+made in Slack (morning and midday, then evening), one for things people asked
+of you in Slack and threads that went quiet, one for Jira comments that
+mention you or land on your epics, one for email you owe a reply on, and one
+on weekday mornings that suggests efforts from your issue tracker and proposes
+a next step on each. The Gmail one needs Gmail connected at
+https://claude.ai/customize/connectors; the others need Slack and Jira. You can also do it by hand at https://claude.ai/code/routines: new
 routine, paste the text of one rendered file, set its schedule from
 `rendered/manifest.json`, attach Slack, add `my-inbox` as the repository.
 
