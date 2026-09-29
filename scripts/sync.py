@@ -33,8 +33,13 @@ DEFAULT_PATHS = ("items", "archive", "INBOX.md")
 
 
 def _identity_args(config):
-    name = cfg_get(config, "git.author_name") or git("config", "user.name", check=False).stdout.strip() or "followup-inbox"
-    email = cfg_get(config, "git.author_email") or git("config", "user.email", check=False).stdout.strip() or "inbox@localhost"
+    """Commit as the user. Claude's cloud refuses to push a branch that carries
+    commits authored by someone other than the account owner, so a bot identity
+    would make every routine push fail."""
+    name = (cfg_get(config, "git.author_name") or cfg_get(config, "user.name")
+            or git("config", "user.name", check=False).stdout.strip() or "followup-inbox")
+    email = (cfg_get(config, "git.author_email") or cfg_get(config, "user.email")
+             or git("config", "user.email", check=False).stdout.strip() or "inbox@localhost")
     return ["-c", f"user.name={name}", "-c", f"user.email={email}"]
 
 

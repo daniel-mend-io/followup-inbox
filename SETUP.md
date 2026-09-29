@@ -60,12 +60,27 @@ cloud environment can push to the instance (step 4).
 
 The routines run in Claude Code's cloud, clone the instance, run
 `git submodule update --init` (the module is public, so that needs no
-credential), and commit directly to `main` of the instance. In claude.ai →
-Code → settings, make sure the GitHub integration covers the instance
-repository with write access, and that `main` has no branch protection that
-blocks direct pushes. That GitHub grant is the one credential that matters: it
-can write to every repository it covers, so scope it to the instance if you
-can.
+credential), and push to `main` of the instance.
+
+1. Install the Claude GitHub App: https://github.com/apps/claude/installations/new
+   Pick your account, choose **Only select repositories**, select the instance
+   repository, click Install & Authorize. That grant is the one credential in
+   this setup that matters: it can write to every repository it covers, so keep
+   it to the instance. To add or remove repositories later:
+   https://github.com/settings/installations → Claude → Configure.
+2. Leave `main` **unprotected**. The cloud checks every push to a branch not
+   prefixed `claude/` and refuses it if the branch is protected, if someone
+   else has an open pull request from it, or if it carries commits authored
+   by anyone other than you. That last rule is why `sync.py` commits as
+   `user.name` / `user.email` from `config.yml`: make sure that email is one
+   your GitHub account knows.
+3. Nothing in the docs says whether the cloud checkout initialises submodules,
+   so the prompts do it explicitly. Confirm on the first manual run (step 5)
+   that a commit arrived; if the run log shows `tool/scripts` missing, that is
+   the place to look.
+
+Source: https://code.claude.com/docs/en/routines.md ("Repositories and branch
+permissions") and https://code.claude.com/docs/en/web-quickstart.md.
 
 ## 5. Install the routines
 

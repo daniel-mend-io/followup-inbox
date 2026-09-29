@@ -91,10 +91,18 @@ The second check does the same test but through git, so you know uploading
 works too.
 
 **6. Let Claude's cloud write to your inbox.** The robots run on Anthropic's
-computers, not yours. They need permission to push to `my-inbox`. In
-https://claude.ai/code, open settings, find the GitHub connection, and make
-sure it includes `my-inbox` with write access. Give it only that repository if
-you can; it is the one permission in this whole setup that matters.
+computers, not yours, so GitHub has to let them push to `my-inbox`. Open
+https://github.com/apps/claude/installations/new, pick your account, choose
+**Only select repositories**, tick `my-inbox`, click **Install & Authorize**.
+Give it only that one repository; this is the one permission in the whole
+setup that matters. (Later, to change it: https://github.com/settings/installations,
+Claude, Configure.)
+
+Two rules to know. Do not put branch protection on `main` in `my-inbox`; the
+cloud refuses to push to protected branches. And the cloud refuses to push a
+branch that has commits by someone other than you, so the robots commit under
+your name and the email from `config.yml`. Make sure that email is one your
+GitHub account knows (GitHub, Settings, Emails).
 
 **7. Create the robots.**
 

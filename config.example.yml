@@ -28,10 +28,13 @@ internal_email_domain: example.com # calendar attendees outside this domain are 
 module_path: tool
 
 git:
-  repo_url: https://github.com/you/followup-inbox   # PRIVATE. Routines clone, commit and push here.
-  branch: main
-  author_name: followup-inbox      # identity for routine commits
-  author_email: inbox@localhost
+  repo_url: https://github.com/you/my-inbox   # your PRIVATE instance. Routines clone, commit and push here.
+  branch: main                     # must NOT be a protected branch (the cloud refuses to push to those)
+  # Routine commits are authored as user.name / user.email above. Keep it that
+  # way: the cloud refuses to push a branch carrying commits by anyone other
+  # than you. Override only if your GitHub email differs from user.email.
+  # author_name:
+  # author_email:
 
 # ---- notification ------------------------------------------------------------
 notify:
