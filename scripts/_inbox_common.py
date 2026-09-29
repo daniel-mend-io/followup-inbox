@@ -48,7 +48,12 @@ CONFIG_PATH = os.path.join(REPO_ROOT, "config.yml")
 ENV_PATH = os.path.join(REPO_ROOT, ".env")
 
 SOURCES = ("slack", "jira", "email", "calendar")
-KINDS = ("commitment", "loose_thread", "needs_reply", "fyi")
+# commitment   the user promised something          (from: the user)
+# ask          someone asked the user to do something (to: the user)
+# needs_reply  a direct question to the user is unanswered
+# loose_thread a conversation stopped without landing
+# fyi          informational; nothing owed
+KINDS = ("commitment", "ask", "needs_reply", "loose_thread", "fyi")
 STATUSES = ("new", "waiting", "ready", "done", "dismissed")
 OPEN_STATUSES = ("new", "waiting", "ready")
 CLOSED_STATUSES = ("done", "dismissed")

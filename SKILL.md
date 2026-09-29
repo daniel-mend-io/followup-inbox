@@ -27,7 +27,9 @@ python3 scripts/list.py --max-age 1                       # created in the last 
 ```
 
 Statuses: `new | waiting | ready | done | dismissed`. Sources: `slack | jira |
-email | calendar`. Kinds: `commitment | loose_thread | needs_reply | fyi`.
+email | calendar`. Kinds: `commitment` (the user promised), `ask` (someone
+asked the user), `needs_reply` (unanswered question to the user),
+`loose_thread` (conversation stopped without landing), `fyi`.
 `--json` returns full records including `body`, `proposed_reply` and `path`.
 
 ## Add items (idempotent)
