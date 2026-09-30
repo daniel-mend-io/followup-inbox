@@ -38,11 +38,13 @@ Commitments already queued (kind `commitment`) are not loose threads: skip those
 
 Two sweeps. The first is exhaustive over a short window; the second samples a longer one. Never add a `before:` filter to either: the window always ends now, and a message from an hour ago counts.
 
-**Sweep A, every message to the user since the last run.** Work out when this routine last ran: the newest `seen_at` among the store's slack items, or the date of the last `loose-threads:` commit in `git log`; if neither exists use 2 days ago. Subtract 12 hours for safety. Then, with `slack_search_public_and_private`, `sort: timestamp`, `include_context: false`, `response_format: concise`, `after:<that date>`, run these three and **page through every result with the cursor until the results are older than the last run**:
-- `is:dm` (DMs)
-- `channel_types: mpim` (group DMs)
-- `to:@me` (mentions anywhere)
-Every message in those results that is not from the user and not from a bot is a candidate. Search results are ranked and capped at 20 per page, so a single unpaged query over a long window silently drops the short, recent messages that asks usually are. This sweep is what catches "please update the sprint" sent this morning.
+**Sweep A, every message to the user since the last run.** Work out when this routine last ran: the newest `seen_at` among the store's slack items, or the date of the last `loose-threads:` commit in `git log`; if neither exists use 2 days ago. Subtract 12 hours for safety; call the result the window start. Three passes, all with `slack_search_public_and_private`, `sort: timestamp`, `include_context: false`, `response_format: concise`, `after:<window start date>`:
+
+1. **Keyword passes inside the window.** For each of `please`, `"can you"`, `"could you"`, `"would you"`, `"let me know"`, `"need your"`, `?`, run `is:dm` + the keyword, then `channel_types: mpim` + the keyword, then `to:@me` + the keyword. These return few results each, so page each one to the end. A message that carries a request word is a candidate whoever sent it.
+2. **The unfiltered timeline.** `is:dm`, then `channel_types: mpim`, then `to:@me`, each with no keywords, paging with the cursor **until the oldest message on the page is earlier than the window start**. On a busy day that is five to ten pages per pass; do not stop early because a page looks like chatter, and do not decide the pass is done until you have seen a message older than the window start.
+3. **Every DM conversation that had a message in the window.** Collect the DM and group-DM channel ids seen in passes 1 and 2, and for each read it with `slack_read_channel` from the window start to now. A DM is the highest-signal place for an ask and the cheapest to read completely; a one-line "please update X" with a ticket link is exactly what this pass exists to catch.
+
+Every message in those results that is not from the user and not from a bot is a candidate. Search results are ranked and capped at 20 per page; a single unpaged query over a long window silently drops short, recent messages, which is what asks usually are.
 
 **Sweep B, the longer tail.** Over the last {{slack.loose_thread_lookback_days}} days, keyword passes for request phrasing near the user's name ("could you", "can you", "please", "would you", "let me know", "need your", "waiting for", "any update"), plus the user's own messages (`from:@me`) to find the threads they are part of. Channels to include: {{slack.include_channels|list}} (none means everything the user is in). Channels to skip: {{slack.exclude_channels|list}}.
 
