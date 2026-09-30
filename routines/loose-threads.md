@@ -36,11 +36,19 @@ Commitments already queued (kind `commitment`) are not loose threads: skip those
 
 ## 2. Find candidates
 
-List the channels the user is in with `slack_list_user_channels`, and use `slack_search_public_and_private` over the last {{slack.loose_thread_lookback_days}} days, in several passes: messages that mention the user (`to:@me`, `@{{user.name}}`); messages in DMs and group DMs with the user that are not from them; request phrasing near their name ("could you", "can you", "please", "would you", "let me know", "need your", "waiting for"); and their own messages (`from:@me`) to find the threads they are part of. Channels to include: {{slack.include_channels|list}} (none means everything). Channels to skip: {{slack.exclude_channels|list}}.
+Two sweeps. The first is exhaustive over a short window; the second samples a longer one. Never add a `before:` filter to either: the window always ends now, and a message from an hour ago counts.
 
-For loose threads, focus on threads whose last message is at least {{slack.loose_thread_quiet_hours}} hours old: a thread still moving is not loose yet. For asks there is no such wait; only whether the user has acted on it matters.
+**Sweep A, every message to the user since the last run.** Work out when this routine last ran: the newest `seen_at` among the store's slack items, or the date of the last `loose-threads:` commit in `git log`; if neither exists use 2 days ago. Subtract 12 hours for safety. Then, with `slack_search_public_and_private`, `sort: timestamp`, `include_context: false`, `response_format: concise`, `after:<that date>`, run these three and **page through every result with the cursor until the results are older than the last run**:
+- `is:dm` (DMs)
+- `channel_types: mpim` (group DMs)
+- `to:@me` (mentions anywhere)
+Every message in those results that is not from the user and not from a bot is a candidate. Search results are ranked and capped at 20 per page, so a single unpaged query over a long window silently drops the short, recent messages that asks usually are. This sweep is what catches "please update the sprint" sent this morning.
 
-Open each candidate with `slack_read_thread` and read it properly before judging. Ask: what did this thread set out to settle, and did it settle it? Only that reading tells you whether it is loose.
+**Sweep B, the longer tail.** Over the last {{slack.loose_thread_lookback_days}} days, keyword passes for request phrasing near the user's name ("could you", "can you", "please", "would you", "let me know", "need your", "waiting for", "any update"), plus the user's own messages (`from:@me`) to find the threads they are part of. Channels to include: {{slack.include_channels|list}} (none means everything the user is in). Channels to skip: {{slack.exclude_channels|list}}.
+
+For loose threads, focus on threads whose last message is at least {{slack.loose_thread_quiet_hours}} hours old: a thread still moving is not loose yet. For asks there is no such wait; only whether the user has acted on it matters. A one-line DM like "please update X" with no reply from the user is an ask, however recent.
+
+Open each candidate (the DM or the thread) and read the messages after it before judging: did the user reply, react with a checkmark, or do the thing? Ask: what did this thread set out to settle, and did it settle it? Only that reading tells you whether it is loose.
 
 Check the issue tracker through the Atlassian connector when a thread points at a ticket: a thread that ended without a reply but whose ticket was then updated or closed is resolved, not loose.
 
