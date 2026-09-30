@@ -22,6 +22,7 @@ can upgrade the module deliberately.
 ```
 followup-inbox/            the module — public, no personal data ever
   GETTING-STARTED.md       plain-language walkthrough for a new user; how to share the tool
+  PROMPTS.md               the same setup as copy-paste prompts for Claude Code
   README.md                this file: what it is, the concurrency model, how to run
   SETUP.md                 the human-only steps
   SKILL.md                 the agent-facing contract for the scripts

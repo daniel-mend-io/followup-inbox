@@ -33,6 +33,9 @@ tool gets an update, you choose when to pull it in.
   you want the robots to check tickets and meetings.
 - A computer with `git` and `python3`. Macs have both. Nothing else to install.
 
+**In a hurry?** [PROMPTS.md](PROMPTS.md) has the same setup as prompts you paste
+into Claude Code, which then does the steps for you.
+
 ## New user, step by step
 
 **1. Make your private inbox on GitHub.** Go to GitHub, New repository, name it
