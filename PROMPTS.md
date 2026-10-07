@@ -19,8 +19,8 @@ https://claude.ai/customize/connectors.
 >
 > 1. Create a private GitHub repository called `my-inbox` under my account with
 >    `gh repo create my-inbox --private`, clone it into this folder, and add the
->    tool as a git submodule at `tool/`. Create `items/`, `archive/`, `efforts/`
->    and `state/` with `.gitkeep` files, and a `.gitignore` containing
+>    tool as a git submodule at `tool/`. Create `items/`, `archive/`, `efforts/`,
+>    `knowledge/` and `state/` with `.gitkeep` files, and a `.gitignore` containing
 >    `rendered/`, `.env`, `__pycache__/`, `*.tmp`.
 > 2. Copy `tool/config.example.yml` to `config.yml` and fill it in: my name is
 >    `<YOUR NAME>`, my email is `<YOUR EMAIL>`, my Slack member id is

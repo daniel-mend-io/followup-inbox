@@ -5,6 +5,7 @@ plus two clones standing in for two routines) and drives the real scripts
 through subprocess with INBOX_ROOT pointing at it.
 """
 
+import datetime
 import json
 import os
 import shutil
@@ -84,13 +85,16 @@ class StoreTests(unittest.TestCase):
             import yaml  # optional; not a dependency of the module
         except ImportError:
             self.skipTest("PyYAML not installed")
-        rec = item(1, title='colon: hash # "quotes" and: yes', trigger="after the 8.5 release", meta={"k": [1, 2]})
+        rec = item(1, title='colon: hash # "quotes" and: yes', trigger="after the 8.5 release", meta={"k": [1, 2]},
+                   resolution='no: Jakub owns it # "BR" said so\nsecond line')
         text = common.dump_item(rec)
         head = text.split("\n---\n")[0][4:]
         parsed = yaml.safe_load(head)
         self.assertEqual(parsed["title"], rec["title"])
         self.assertEqual(parsed["id"], rec["id"])
         self.assertEqual(parsed["meta"], {"k": [1, 2]})
+        self.assertEqual(parsed["resolution"], rec["resolution"])
+        self.assertEqual(common.parse_item(text)["resolution"], rec["resolution"])
         self.assertIsNone(parsed["actor"] if "actor" not in rec else parsed.get("x"))
 
     def test_add_is_idempotent_and_never_touches_status_or_body(self):
@@ -133,10 +137,11 @@ class StoreTests(unittest.TestCase):
         self.assertIn("replied in thread", body)
 
     def test_list_filters_and_digest(self):
+        ago = lambda d: common.iso_utc(common.now_utc() - datetime.timedelta(days=d))  # noqa: E731
         run(self.root, "add.py", "--json", stdin=json.dumps([
-            item(1, created_at="2026-09-01T00:00:00Z", status="waiting"),
-            item(2, created_at="2026-09-27T00:00:00Z", status="ready", proposed_reply="hi"),
-            item(3, source="calendar", id="calendar:evt1", kind="fyi", created_at="2026-09-28T00:00:00Z")]))
+            item(1, created_at=ago(30), status="waiting"),
+            item(2, created_at=ago(4), status="ready", proposed_reply="hi"),
+            item(3, source="calendar", id="calendar:evt1", kind="fyi", created_at=ago(3))]))
         ids = run(self.root, "list.py", "--ids").stdout.split()
         self.assertEqual(ids, ["calendar:evt1", item(2)["id"], item(1)["id"]])  # newest first
         self.assertEqual(run(self.root, "list.py", "--status", "ready", "--ids").stdout.split(), [item(2)["id"]])
@@ -189,8 +194,15 @@ class StoreTests(unittest.TestCase):
         with open(os.path.join(self.root, "rendered", "manifest.json")) as f:
             names = [r["name"] for r in json.load(f)]
         self.assertEqual(names, ["commitments-morning-midday", "commitments-evening", "loose-threads",
-                                 "jira-comments", "gmail", "efforts"])
-        for name in ("jira-comments", "gmail"):
+                                 "jira-comments", "gmail", "efforts", "learn"])
+        self.assertIn("python3 tool/scripts/knowledge.py context", morning)   # the shared partial, rendered
+        self.assertIn("Never write to `knowledge/`", morning)
+        with open(os.path.join(self.root, "rendered", "learn.md")) as f:
+            learn = f.read()
+        self.assertIn("python3 tool/scripts/knowledge.py pending --json", learn)
+        self.assertIn("at most 30", learn)                       # learn defaults reach the prompt
+        self.assertIn("/tree/main/knowledge", learn)
+        for name in ("jira-comments", "gmail", "learn", "efforts", "loose-threads"):
             with open(os.path.join(self.root, "rendered", name + ".md")) as f:
                 self.assertNotIn("{{", f.read())
         self.assertFalse(os.path.exists(os.path.join(MODULE, "routines", "rendered")))
@@ -277,6 +289,138 @@ class EffortAndTuiTests(unittest.TestCase):
         self.assertIn("loose-threads", out)
         self.assertIn("item 1", out)
         self.assertEqual(tui.routine_ids_from_state(os.path.join(self.root, "state", "routine-ids.md")), {"loose-threads": "trig_abc"})
+
+
+class KnowledgeTests(unittest.TestCase):
+    """knowledge.py: topic files, the learn queue, the ledger, examples and scoring."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="inbox-k-")
+        os.makedirs(os.path.join(self.root, "items"))
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def topic(self, name):
+        with open(os.path.join(self.root, "knowledge", name + ".md")) as f:
+            return f.read()
+
+    def add(self, *facts):
+        return run(self.root, "knowledge.py", "add", "--json", stdin=json.dumps(list(facts)), check=False)
+
+    def close(self, i, status="done", **over):
+        run(self.root, "add.py", "--json", stdin=json.dumps(item(i, **over)))
+        run(self.root, "status.py", item(i)["id"], status)
+
+    def test_add_confirm_update_and_drop(self):
+        src = item(1)["id"]
+        out = self.add({"topic": "process", "key": "br-day", "text": "BR is on Thursday.", "source": src}).stdout
+        self.assertTrue(out.startswith("added\tprocess/br-day"), out)
+        out = self.add({"topic": "process", "key": "br-day", "text": "BR is on  thursday.", "source": item(2)["id"]}).stdout
+        self.assertTrue(out.startswith("confirmed"), out)
+        self.assertIn("seen:2", self.topic("process"))
+        self.assertIn(f"src:{item(2)['id']},{src}", self.topic("process"))
+        out = self.add({"topic": "process", "key": "br-day", "text": "BR moved to Wednesday.", "source": src}).stdout
+        self.assertIn("updated\tprocess/br-day\twas: BR is on Thursday.", out)
+        self.assertNotIn("Thursday", self.topic("process"))
+        out = run(self.root, "knowledge.py", "drop", "--topic", "process", "--key", "br-day").stdout
+        self.assertIn("was: BR moved to Wednesday.", out)
+        self.assertNotIn("k:br-day", self.topic("process"))
+        bad = self.add({"topic": "gossip", "key": "x", "text": "y"}, {"topic": "voice", "key": "Bad Key", "text": "y"})
+        self.assertEqual(bad.returncode, 1)
+        self.assertEqual(bad.stderr.count("error"), 2)
+
+    def test_users_lines_and_pinned_entries_are_never_touched(self):
+        self.add({"topic": "voice", "key": "opener", "text": "Lower-case openers.", "source": item(1)["id"]})
+        text = self.topic("voice")
+        tagged = next(l for l in text.splitlines() if "k:opener" in l)
+        # the user pins the entry and writes a line of their own
+        text = text.replace(tagged + "\n", "").replace("## Pinned\n", "## Pinned\n\n" + tagged + "\n")
+        text += "- Never use exclamation marks.\n"
+        with open(os.path.join(self.root, "knowledge", "voice.md"), "w") as f:
+            f.write(text)
+        out = self.add({"topic": "voice", "key": "opener", "text": "Capitalised openers.", "source": item(2)["id"]}).stdout
+        self.assertTrue(out.startswith("pinned"), out)
+        self.assertEqual(self.topic("voice"), text)
+        r = run(self.root, "knowledge.py", "drop", "--topic", "voice", "--key", "opener", check=False)
+        self.assertEqual(r.returncode, 1)
+        self.add({"topic": "voice", "key": "length", "text": "Two sentences at most.", "source": item(1)["id"]})
+        after = self.topic("voice")
+        self.assertIn("- Never use exclamation marks.", after)
+        self.assertIn(tagged, after)
+        self.assertLess(after.index("## Pinned"), after.index(tagged), after)
+
+    def test_cap_warns(self):
+        with open(os.path.join(self.root, "config.yml"), "w") as f:
+            f.write("learn:\n  max_entries_per_topic: 2\n")
+        r = self.add(*[{"topic": "product", "key": f"f{i}", "text": f"fact {i}"} for i in range(3)])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("product has 3 learned entries (cap 2)", r.stderr)
+
+    def test_resolution_note_on_close(self):
+        run(self.root, "add.py", "--json", stdin=json.dumps(item(1, resolution="routines cannot set this")))
+        self.assertIsNone(common.read_item(find(self.root, item(1)["id"])).get("resolution"))
+        run(self.root, "status.py", item(1)["id"], "ready", "--note", "trigger met")
+        self.assertIsNone(common.read_item(find(self.root, item(1)["id"])).get("resolution"))
+        run(self.root, "status.py", item(1)["id"], "done", "--note", "settled in BR: Jakub owns it")
+        path = find(self.root, item(1)["id"])
+        self.assertIn("/archive/", path)
+        it = common.read_item(path)
+        self.assertEqual(it["resolution"], "settled in BR: Jakub owns it")
+        self.assertIn("ready → done: settled in BR", it["body"])
+        pend = json.loads(run(self.root, "knowledge.py", "pending", "--json").stdout)
+        self.assertEqual(pend[0]["resolution"], "settled in BR: Jakub owns it")
+        run(self.root, "status.py", item(1)["id"], "new", "--reopen")
+        it = common.read_item(find(self.root, item(1)["id"]))
+        self.assertIsNone(it.get("resolution"))
+        self.assertIn("settled in BR", it["body"])                       # history stays in the audit line
+        run(self.root, "status.py", item(1)["id"], "done", "--note", "replied in the DM")
+        run(self.root, "knowledge.py", "mark", item(1)["id"], "--outcome", "replied", "--sent-file", "-",
+            "--example", stdin="done, see the DM")
+        self.assertIn("**Resolution (the user's note):** replied in the DM",
+                      run(self.root, "knowledge.py", "context").stdout)
+
+    def test_pending_mark_score_and_examples(self):
+        self.close(1, proposed_reply="ran the check - seven tickets still carry 9.2, all long parked")
+        self.close(2, status="dismissed")
+        run(self.root, "add.py", "--json", stdin=json.dumps(item(3)))           # still open: never pending
+        pend = json.loads(run(self.root, "knowledge.py", "pending", "--json").stdout)
+        self.assertEqual(sorted(p["id"] for p in pend), sorted([item(1)["id"], item(2)["id"]]))
+        self.assertIsNone(pend[0]["closed_at"])                                 # no git history: counts as old
+        r = run(self.root, "knowledge.py", "mark", item(3)["id"], "--outcome", "acted", check=False)
+        self.assertEqual(r.returncode, 1)                                       # open items are not learned from
+        out = run(self.root, "knowledge.py", "mark", item(1)["id"], "--outcome", "replied", "--sent-file", "-",
+                  "--example", "--note", "dropped the hedge", stdin="seven tickets still carry 9.2, all long parked").stdout
+        self.assertIn("survival=", out)
+        self.assertIn("example\tknowledge/examples/", out)
+        score = float(out.split("survival=")[1].split()[0])
+        self.assertTrue(0.5 < score < 1.0, score)
+        run(self.root, "knowledge.py", "mark", item(2)["id"], "--outcome", "dismissed")
+        again = run(self.root, "knowledge.py", "mark", item(2)["id"], "--outcome", "acted").stdout
+        self.assertTrue(again.startswith("exists"), again)
+        self.assertEqual(json.loads(run(self.root, "knowledge.py", "pending", "--json").stdout), [])
+        stats = json.loads(run(self.root, "knowledge.py", "stats", "--json").stdout)
+        self.assertEqual((stats[-1]["n"], stats[-1]["replied"], stats[-1]["dismissed"], stats[-1]["scored"]), (2, 1, 1, 1))
+        ctx = run(self.root, "knowledge.py", "context").stdout
+        self.assertIn("### Drafted", ctx)
+        self.assertIn("seven tickets still carry 9.2", ctx)
+        self.assertIn("dropped the hedge", ctx)
+
+    def test_examples_are_pruned_and_context_is_compact(self):
+        self.assertEqual(run(self.root, "knowledge.py", "context").stdout.strip(), "(nothing learned yet)")
+        with open(os.path.join(self.root, "config.yml"), "w") as f:
+            f.write("learn:\n  examples_kept: 2\n")
+        for i in range(1, 4):
+            self.close(i)
+            run(self.root, "knowledge.py", "mark", item(i)["id"], "--outcome", "replied", "--sent-file", "-",
+                "--example", stdin=f"reply {i}")
+        self.assertEqual(len(os.listdir(os.path.join(self.root, "knowledge", "examples"))), 2)
+        self.add({"topic": "people", "key": "alex", "text": "Alex owns the toggles.", "source": item(1)["id"]})
+        ctx = run(self.root, "knowledge.py", "context").stdout
+        self.assertIn("- Alex owns the toggles. (seen 1x, last ", ctx)
+        self.assertNotIn("{k:", ctx)
+        self.assertNotIn("Written by the learn routine", ctx)
+        self.assertFalse(ctx.rstrip().endswith("---"), ctx)
 
 
 class GitTests(unittest.TestCase):
@@ -369,6 +513,30 @@ class GitTests(unittest.TestCase):
         # and a re-scan on the fresh clone does not bring it back
         out = run(check, "add.py", "--json", stdin=json.dumps([item(1)])).stdout
         self.assertTrue(out.startswith("exists") and "archive/" in out, out)
+
+
+    def test_learn_waits_for_the_reply_and_user_edits_win(self):
+        a, b = self.clones
+        run(a, "add.py", "--json", stdin=json.dumps([item(1)]))
+        run(a, "status.py", item(1)["id"], "done")
+        run(a, "sync.py", "-m", "human: done")
+        # just closed: held back, so the reply has time to be sent
+        self.assertEqual(json.loads(run(a, "knowledge.py", "pending", "--json").stdout), [])
+        pend = json.loads(run(a, "knowledge.py", "pending", "--json", "--min-hours", "0").stdout)
+        self.assertEqual([p["id"] for p in pend], [item(1)["id"]])
+        self.assertIsNotNone(pend[0]["closed_at"])
+        # the user edits knowledge on one clone while the routine learns on a stale one
+        run(a, "knowledge.py", "add", "--topic", "voice", "--key", "opener", "--text", "Lower-case openers.")
+        run(a, "sync.py", "-m", "learn: seed")
+        git(b, "pull", "-q", "--rebase", "origin", "main")
+        with open(os.path.join(b, "knowledge", "voice.md"), "a") as f:
+            f.write("- Never use exclamation marks.\n")
+        run(b, "sync.py", "-m", "human: knowledge edit")
+        run(a, "knowledge.py", "add", "--topic", "voice", "--key", "length", "--text", "Two sentences at most.")
+        r = run(a, "sync.py", "-m", "learn: stale", check=False)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        with open(os.path.join(self.fresh(), "knowledge", "voice.md")) as f:
+            self.assertIn("- Never use exclamation marks.", f.read())
 
     def test_verify_commit_round_trip(self):
         a = self.clones[0]

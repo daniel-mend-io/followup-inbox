@@ -118,12 +118,12 @@ This turns your settings into three ready-made instructions in a folder called
 
 > install the routines from rendered/manifest.json
 
-It creates six scheduled routines for you: two that look for promises you
+It creates seven scheduled routines for you: two that look for promises you
 made in Slack (morning and midday, then evening), one for things people asked
 of you in Slack and threads that went quiet, one for Jira comments that
-mention you or land on your epics, one for email you owe a reply on, and one
+mention you or land on your epics, one for email you owe a reply on, one
 on weekday mornings that suggests efforts from your issue tracker and proposes
-a next step on each. The Gmail one needs Gmail connected at
+a next step on each, and one in the evening that learns from what you closed. The Gmail one needs Gmail connected at
 https://claude.ai/customize/connectors; the others need Slack and Jira. You can also do it by hand at https://claude.ai/code/routines: new
 routine, paste the text of one rendered file, set its schedule from
 `rendered/manifest.json`, attach Slack, add `my-inbox` as the repository.
@@ -135,8 +135,8 @@ Then, in your inbox folder:
 ```
 git pull
 python3 tool/scripts/list.py                  # what is open, newest first
-python3 tool/scripts/status.py "<id>" done    # I did it
-python3 tool/scripts/status.py "<id>" dismissed   # not a real thing, drop it
+python3 tool/scripts/status.py "<id>" done --note "how it was resolved"   # I did it
+python3 tool/scripts/status.py "<id>" dismissed --note "why"              # not a real thing, drop it
 python3 tool/scripts/sync.py -m "triage"      # save and upload your decisions
 ```
 
@@ -147,6 +147,18 @@ you can read on GitHub.
 Each note is a small text file you can open. A note you mark done or
 dismissed is never brought back, even if the robots see the same message
 again.
+
+**The drafts learn from you.** Every evening the `learn` robot looks at what
+you closed. Where you replied, it compares what you actually sent with what it
+had drafted. Where you dismissed something, it works out why. It writes what it
+learned (how you write, facts about your product, people and process, what not
+to raise) into the `knowledge/` folder, and every other robot reads that folder
+before it drafts. The one-line note you can add when you close something ("answered in BR",
+"wrong person, Jakub owns it", "bot noise") is what it learns from best; the
+screen version asks for it. You get one DM saying what it learned. If something there is
+wrong, delete the line; if something must never change, move it under
+`## Pinned`. `python3 tool/scripts/knowledge.py stats` shows, week by week, how
+much of each draft survived into what you sent.
 
 If a robot found nothing, it stays quiet. No DM means nothing new.
 

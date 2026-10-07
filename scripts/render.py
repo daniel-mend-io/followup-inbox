@@ -15,6 +15,7 @@ Templates live in routines/*.md and use:
   {{slack.exclude_channels|list}}  filters: list (comma-joined, "none" if empty), bullets, json
   {{#if routine.end_of_day}} ... {{/if}}     conditional block (truthy value)
   {{#unless x}} ... {{/unless}}
+  {{> knowledge}}                  the shared text in routines/_partials/knowledge.md, rendered in place
 Unknown placeholders are an error: a prompt with a hole in it must not ship.
 """
 
@@ -34,6 +35,16 @@ OUT_DIR = os.path.join(REPO_ROOT, "rendered")           # output lands in the in
 # in render_text repeats until nothing matches, so nesting resolves inside-out
 _BLOCK = re.compile(r"\{\{#(if|unless) ([\w.]+)\}\}((?:(?!\{\{#).)*?)\{\{/\1\}\}", re.S)
 _VAR = re.compile(r"\{\{([\w.]+)(?:\|(\w+))?\}\}")
+_PARTIAL = re.compile(r"\{\{> ([\w-]+)\}\}")
+PARTIALS_DIR = os.path.join(ROUTINES_DIR, "_partials")
+
+
+def _include(m):
+    path = os.path.join(PARTIALS_DIR, m.group(1) + ".md")
+    if not os.path.exists(path):
+        raise InboxError(f"no partial routines/_partials/{m.group(1)}.md")
+    with open(path, encoding="utf-8") as f:
+        return f.read().rstrip("\n")
 
 
 def cron_local_times(cron, tz):
@@ -80,6 +91,9 @@ def build_context(config, routine):
         repo_url = repo_url[:-4]
     ctx["git"] = dict(config.get("git") or {}, repo_url=repo_url)
     ctx["inbox_link"] = f"{repo_url}/blob/{cfg_get(config, 'git.branch', 'main')}/INBOX.md"
+    ctx["knowledge_link"] = f"{repo_url}/tree/{cfg_get(config, 'git.branch', 'main')}/knowledge"
+    from knowledge import DEFAULTS as learn_defaults
+    ctx["learn"] = {**learn_defaults, **(config.get("learn") or {})}
     return ctx
 
 
@@ -121,8 +135,8 @@ def render_text(template, ctx, name="template"):
         show = bool(val) if kind == "if" else not val
         return body if show else ""
 
+    text = _PARTIAL.sub(_include, template)  # one level; a partial may not include another
     prev = None
-    text = template
     while prev != text:  # nested blocks
         prev = text
         text = _BLOCK.sub(blocks, text)

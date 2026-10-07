@@ -49,6 +49,17 @@ voice: |
   no "I wanted to", no emoji, no restating the whole thread. Answer the
   thing that was promised; say what happens next if something is still open.
 
+# ---- Learning ----------------------------------------------------------------
+# The learn routine reads closed items at their source (what you actually sent,
+# what you dismissed) and keeps what it learns in knowledge/, which every other
+# routine reads before drafting. All optional; these are the defaults.
+learn:
+  min_hours_closed: 2              # hold back items closed more recently: the reply may not be sent yet
+  max_per_run: 30
+  max_entries_per_topic: 60        # past this the routine consolidates
+  examples_kept: 20                # drafted-vs-sent pairs kept in knowledge/examples/
+  examples_in_context: 8           # how many of them the drafting routines read
+
 # ---- Slack -------------------------------------------------------------------
 slack:
   lookback_days: 7                 # each commitment scan covers this window (idempotent, so overlap is fine)
@@ -141,6 +152,11 @@ routines:
     template: efforts
     cron: "0 6 * * 1-5"
     connectors: [Atlassian, Slack, Google-Calendar]
+
+  - name: learn                       # learns from what you closed; feeds every other routine's drafts
+    template: learn
+    cron: "30 17 * * *"
+    connectors: [Slack, Atlassian]
 
   - name: customer-calls              # optional; needs the `colleague` block above
     template: customer-calls

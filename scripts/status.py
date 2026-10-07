@@ -3,7 +3,12 @@
 
 Usage:
   ./status.py <id> <new-status>          new | waiting | ready | done | dismissed
-  ./status.py <id> done --note "sent the reply in thread"
+  ./status.py <id> done --note "answered in thread: no scoping on the SAST side"
+
+A note on done/dismissed is the resolution: how it was settled, in the user's
+words. It is kept in the `resolution` field (and the audit line), and the learn
+routine treats it as the best evidence of what happened. Reopening clears the
+field; the audit line keeps the history.
 
 Closing (done/dismissed) moves the file to archive/YYYY-MM/. A closed item is
 never re-raised by a scan, because `add` finds it in the archive and leaves it
@@ -33,6 +38,10 @@ def set_status(item_id, new_status, note=None, reopen=False):
     if old in CLOSED_STATUSES and new_status not in CLOSED_STATUSES and not reopen:
         raise InboxError(f"{item_id} is {old}; pass --reopen to bring it back (humans only)")
     item["status"] = new_status
+    if new_status in CLOSED_STATUSES:
+        item["resolution"] = note or item.get("resolution")
+    else:
+        item["resolution"] = None
     if note:
         stamp = iso_utc()
         item["body"] = (item.get("body") or "").rstrip("\n")
@@ -53,7 +62,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("id")
     ap.add_argument("new_status", choices=STATUSES)
-    ap.add_argument("--note", help="appended to the body as an audit line")
+    ap.add_argument("--note", help="appended to the body as an audit line; on done/dismissed also the resolution")
     ap.add_argument("--reopen", action="store_true", help="allow moving a closed item back to open")
     args = ap.parse_args()
     try:

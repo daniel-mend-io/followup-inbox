@@ -475,7 +475,7 @@ class App:
             created = parse_ts(cur["created_at"]).astimezone(tz).strftime("%a %d %b %Y %H:%M")
             meta = [("who", cur.get("actor")), ("trigger", cur.get("trigger")),
                     ("created", f"{created}  ({fmt_age(cur['created_at'])} ago)"), ("id", cur.get("id")),
-                    ("link", cur.get("url"))]
+                    ("link", cur.get("url")), ("resolved", cur.get("resolution"))]
             for k, v in meta:
                 if v:
                     for n, ln in enumerate(wrap(str(v), w - 10)):
@@ -619,6 +619,11 @@ class App:
     # actions -----------------------------------------------------------------
     def set_item_status(self, cur, new):
         extra = ["--reopen"] if cur.get("status") in ("done", "dismissed") and new not in ("done", "dismissed") else []
+        if new in ("done", "dismissed") and cur.get("status") not in ("done", "dismissed"):
+            ask = "how was it resolved?" if new == "done" else "why dismiss it?"
+            note = self.prompt(f"{ask} (Enter to skip)")
+            if note:
+                extra += ["--note", note]
         ok, out = run_script("status.py", cur["id"], new, *extra)
         self.say(out, not ok)
         self.reload()
@@ -681,7 +686,7 @@ class App:
         if key == "g":
             self.say("syncing…")
             self.draw()
-            ok, out = run_script("sync.py", "-m", "triage", "items", "archive", "efforts", "INBOX.md")
+            ok, out = run_script("sync.py", "-m", "triage", "items", "archive", "efforts", "knowledge", "INBOX.md")
             self.say(out, not ok)
             self.reload()
             return

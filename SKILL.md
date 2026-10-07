@@ -86,12 +86,14 @@ Sets or replaces the `## Proposed reply` section. Refuses on closed items.
 
 ```bash
 python3 scripts/status.py "<id>" ready --note "trigger met: release 8.5 shipped 2026-10-02"
-python3 scripts/status.py "<id>" done
-python3 scripts/status.py "<id>" dismissed
+python3 scripts/status.py "<id>" done --note "answered in thread; owner is Jakub, not me"   # the resolution
+python3 scripts/status.py "<id>" dismissed --note "bot alert, on-call owns these"
 python3 scripts/status.py "<id>" new --reopen        # humans only
 ```
 
-`done` / `dismissed` move the file to `archive/YYYY-MM/`. **Routines may only
+`done` / `dismissed` move the file to `archive/YYYY-MM/`; a `--note` there is
+stored as `resolution`, the user's account of how it was settled, which the
+learn routine relies on. **Routines may only
 move `new`/`waiting` → `ready`, with `--note`.** Everything else is the human's.
 
 ## Digest and commit
@@ -99,7 +101,7 @@ move `new`/`waiting` → `ready`, with `--note`.** Everything else is the human'
 ```bash
 python3 scripts/digest.py                                   # rewrite INBOX.md
 python3 scripts/sync.py -m "commitments: +2 new, 1 ready" items/slack__C01__1.2.md INBOX.md
-python3 scripts/sync.py -m "triage"                         # default paths: items archive efforts INBOX.md
+python3 scripts/sync.py -m "triage"                         # default paths: items archive efforts knowledge INBOX.md
 ```
 
 `sync.py` commits, pulls with rebase, resolves the store's conflicts by rule
@@ -130,6 +132,32 @@ python3 scripts/efforts.py note "jira:PROJ-1" "beta slipped a week"
 
 **Routines may only `add` with status `suggested` and write `suggest`.**
 Status, next action and body are the human's.
+
+## Knowledge
+
+What closed items taught, under `knowledge/`: `voice.md`, `product.md`,
+`people.md`, `process.md`, `triage.md`, `examples/` and `ledger.tsv`.
+
+```bash
+python3 scripts/knowledge.py context                        # every routine reads this before it drafts
+python3 scripts/knowledge.py pending --json                 # learn routine: closed items not learned from yet
+python3 scripts/knowledge.py add --json <<'JSON'
+[{"topic": "voice", "key": "lead-with-answer", "text": "Lead with the answer.", "source": "slack:C01/1.2"}]
+JSON
+python3 scripts/knowledge.py mark "<id>" --outcome replied --sent-file - --example --note "cut the preamble" <<'TEXT'
+what the user actually sent
+TEXT
+python3 scripts/knowledge.py mark "<id>" --outcome acted|dismissed|unknown
+python3 scripts/knowledge.py drop --topic voice --key lead-with-answer
+python3 scripts/knowledge.py stats                          # outcomes and draft survival per week
+```
+
+`add` prints `added`, `confirmed` (seen +1), `updated` (with the old text) or
+`pinned` (the user's; unchanged). Keys are lowercase slugs; reuse a key to
+confirm or refine. `mark` is once per item (`exists` after that) and only on
+closed items. **Only the learn routine writes here; every other routine only
+reads `context`.** The user edits the files by hand: untagged lines and
+`## Pinned` entries are never changed by the script.
 
 ## TUI
 

@@ -8,6 +8,8 @@ The git repository {{git.repo_url}} is checked out in your working directory. It
 
 Every command below is run from the repository root.
 
+{{> knowledge}}
+
 ## 1. Read what has already been flagged
 
 ```

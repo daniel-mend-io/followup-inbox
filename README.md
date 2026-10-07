@@ -27,8 +27,9 @@ followup-inbox/            the module — public, no personal data ever
   SETUP.md                 the human-only steps
   SKILL.md                 the agent-facing contract for the scripts
   config.example.yml       people, channels, hours, timezone, schedules
-  scripts/                 add | list | status | draft | digest | sync | verify | render | efforts | tui
-  routines/                one prompt template per routine (Slack, Jira, Gmail, efforts, calendar)
+  scripts/                 add | list | status | draft | digest | sync | verify | render | efforts | knowledge | tui
+  routines/                one prompt template per routine (Slack, Jira, Gmail, efforts, calendar, learn)
+  routines/_partials/      text shared by several routines, included with {{> name}}
   state/                   operational notes, memory-file shaped (index + DST caveat)
   tests/                   python3 -m unittest discover -s tests
 
@@ -37,6 +38,7 @@ my-inbox/                  your instance — private; what the routines clone
   items/                   open items, one file each
   archive/YYYY-MM/         closed items (done / dismissed)
   efforts/                 the things you keep in your head, one file each
+  knowledge/               what closed items taught: voice, product, people, process, triage
   INBOX.md                 generated digest — never hand-edited
   rendered/                routine prompts + manifest.json, generated, gitignored
   state/routine-ids.md     which cloud routines were created from this instance
@@ -66,6 +68,7 @@ url: "https://…"                             # deep link back to the source
 actor: Alex                                  # who is waiting on you
 trigger: after the 8.5 release               # null if none stated
 status: waiting                              # new | waiting | ready | done | dismissed
+resolution: answered in thread               # the user's note on closing; absent until then
 ---
 
 The detail: the message quoted, and two lines of thread context.
@@ -96,6 +99,7 @@ item stays closed however many times its source is re-scanned.
 | actor, trigger, body | write once; fill if empty | edit the file |
 | proposed reply | replace freely (`draft.py`) | edit the file |
 | status | only `new/waiting → ready`, with `--note` | anything (`status.py`) |
+| resolution | never | `status.py … done --note "…"`, or the TUI's prompt on close |
 
 Status is the human's. `done` and `dismissed` move the file to
 `archive/YYYY-MM/` so the working set stays small; reopening needs
@@ -122,6 +126,46 @@ routine suggests the ones the tracker shows you own (status `suggested`, for
 you to accept or drop) and proposes a next concrete step on any open effort
 that has none or has gone quiet. Only you change an effort's status, next
 action or notes.
+
+## Learning
+
+The drafts are only useful if they read like the user wrote them and get the
+facts right. So a closed item is not the end of it: the `learn` routine runs
+in the evening, takes every item closed since it last ran (held back for
+`learn.min_hours_closed`, because people close an item before they send the
+reply), reads what happened at the source, and writes what it learned to
+`knowledge/`:
+
+| file | learned from | example |
+|---|---|---|
+| `voice.md` | what the user sent against what was drafted | "lead with the finding; never restate the question" |
+| `product.md`, `people.md`, `process.md` | the threads, and the user's corrections of the draft | "release-notes go through the docs team, not Slack" |
+| `triage.md` | what the user dismissed | "do not raise questions in the alerts channel; on-call owns them" |
+| `examples/` | the most telling drafted-vs-sent pairs | |
+| `ledger.tsv` | every closed item learned from, with its outcome and score | |
+
+There is no extra status. `done` with a reply in the thread is the strongest
+signal (a real draft-versus-sent pair), `done` without one shows where things
+really get settled, and `dismissed` is triage feedback. When closing, the user
+can say in a line how it was resolved or why it was dropped (the TUI asks;
+`status.py … --note`). That `resolution` is the learn routine's best evidence:
+it says where the answer went, what the draft got wrong, or why something was
+noise, which a thread alone often cannot. The close time comes
+from git: the commit that moved the file into `archive/`.
+
+Every other routine runs `knowledge.py context` before it judges or drafts,
+through the shared `routines/_partials/knowledge.md`. Learned voice outranks
+the configured `voice:` line, facts carry a count and a date so a stale one is
+checked before it is used, and a triage rule makes a routine skip an item and
+say so in its report.
+
+Writes are direct (no approval step) and the routine DMs what it learned. The
+user corrects by editing: lines without the routine's `{k:…}` tag are never
+touched, entries under `## Pinned` are never rewritten or dropped, and in a
+`sync.py` conflict the user's version wins. `knowledge.py mark` scores each
+reply by how much of the draft survived into what was sent;
+`knowledge.py stats` shows that by week, which is the measure of whether this
+is working.
 
 ## The TUI
 

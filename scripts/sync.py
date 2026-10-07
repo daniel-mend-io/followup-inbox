@@ -11,10 +11,10 @@ The concurrency model (see README, "Concurrency"):
   2. `git pull --rebase` onto the remote branch
   3. resolve the only conflicts the store can produce, mechanically:
        - INBOX.md is derived: regenerate it from the merged tree
-       - items/ and archive/: the version already on the remote wins
-         (same rule as the store's "if the file exists, do not rewrite it";
-         a human's status change is always on the remote before a routine's
-         enrichment, so the human wins)
+       - items/, archive/, efforts/ and knowledge/: the version already on the
+         remote wins (same rule as the store's "if the file exists, do not
+         rewrite it"; a human's status change or knowledge edit is always on
+         the remote before a routine's write, so the human wins)
   4. regenerate the digest on top of the merged tree; commit it if it changed
   5. push; if the remote moved in between, go back to 2 — bounded retries, jittered
 No force pushes, ever. If retries run out the local commits remain intact and
@@ -29,7 +29,7 @@ import time
 
 from _inbox_common import DIGEST_PATH, REPO_ROOT, InboxError, die, git, is_git_repo, load_config, cfg_get, rel
 
-DEFAULT_PATHS = ("items", "archive", "efforts", "INBOX.md")
+DEFAULT_PATHS = ("items", "archive", "efforts", "knowledge", "INBOX.md")
 
 
 def _identity_args(config):
@@ -78,7 +78,7 @@ def _resolve_rebase_conflicts(ident):
                 git("checkout", "--ours", "--", p, check=False)  # any content; regenerated below
                 regenerate_digest()
                 git("add", "--", p)
-            elif p.startswith(("items/", "archive/", "efforts/")):
+            elif p.startswith(("items/", "archive/", "efforts/", "knowledge/")):
                 # upstream ("ours" during a rebase) wins; if upstream removed/moved it, drop ours
                 if git("cat-file", "-e", f"HEAD:{p}", check=False).returncode == 0:
                     git("checkout", "HEAD", "--", p)
@@ -156,7 +156,7 @@ def sync(message, paths, retries=5):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-m", "--message", required=True)
-    ap.add_argument("paths", nargs="*", help="paths to stage (default: items archive INBOX.md)")
+    ap.add_argument("paths", nargs="*", help="paths to stage (default: items archive efforts knowledge INBOX.md)")
     ap.add_argument("--retries", type=int, default=5)
     args = ap.parse_args()
     try:

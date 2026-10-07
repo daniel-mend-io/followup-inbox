@@ -61,7 +61,8 @@ CLOSED_STATUSES = ("done", "dismissed")
 # Frontmatter keys, in the order they are written. Mirrors the inbox_items
 # columns; `body` and `proposed_reply` live in the Markdown body instead.
 FIELDS = ("id", "source", "kind", "created_at", "seen_at", "title", "url",
-          "actor", "trigger", "status", "meta")
+          "actor", "trigger", "status", "resolution", "meta")
+OPTIONAL_FIELDS = ("resolution", "meta")   # omitted from the file when empty
 REQUIRED = ("id", "source", "kind", "created_at", "title")
 
 PROPOSED_HEADING = "## Proposed reply"
@@ -244,7 +245,7 @@ def dump_item(item, fields=FIELDS, section_heading=PROPOSED_HEADING, section_key
     """Serialise a record dict to file text: frontmatter (fields, in order), body, one named section."""
     lines = ["---"]
     for key in fields:
-        if key == "meta" and not item.get("meta"):
+        if key in OPTIONAL_FIELDS and not item.get(key):
             continue
         lines.append(f"{key}: {_dump_scalar(item.get(key))}")
     lines.append("---")
@@ -452,6 +453,19 @@ def validate_effort(e):
         raise InboxError(f"bad effort kind {e['kind']!r}; want one of {', '.join(EFFORT_KINDS)}")
     if e.get("status", "active") not in EFFORT_STATUSES:
         raise InboxError(f"bad effort status {e['status']!r}; want one of {', '.join(EFFORT_STATUSES)}")
+
+
+# ----------------------------------------------------------------------------
+# Knowledge: what closed items taught about the user's voice, product, people,
+# process and triage. One Markdown file per topic under knowledge/, plus
+# draft-vs-sent examples and a ledger of the items already learned from.
+# Written only through knowledge.py (by the learn routine); the user edits the
+# files by hand and their lines are never rewritten. See knowledge.py.
+# ----------------------------------------------------------------------------
+
+KNOWLEDGE_DIR = os.path.join(REPO_ROOT, "knowledge")
+KNOWLEDGE_TOPICS = ("voice", "product", "people", "process", "triage")
+LEARN_OUTCOMES = ("replied", "acted", "dismissed", "unknown")
 
 
 # ----------------------------------------------------------------------------
