@@ -10,4 +10,4 @@ List the events on the calendar named "{{releases.calendar}}" (find its id with 
 JSON
 ```
 
-Stage `state/releases.json` with the rest of this run's paths when you save. If the calendar cannot be read, leave the file as it is and say so in the report.
+Stage `state/releases.json` with the rest of this run's paths when you save. The release dates are saved even on a run that is otherwise quiet: if nothing else changes but `git status --porcelain state/releases.json` shows the file changed, run `{{scripts}}/sync.py -m "releases: refreshed from the calendar" state/releases.json` and stop there, without a message. If the calendar cannot be read, leave the file as it is and say so in the report (if there is one).
