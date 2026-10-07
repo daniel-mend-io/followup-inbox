@@ -135,6 +135,20 @@ build their working sets with `list.py`, they leave a snoozed item alone: no
 redrafting, no nagging. It stays in `list.py --all --ids`, so it is never
 re-raised as new. `--wake` brings it back early; closing it ends the snooze.
 
+## Release notes
+
+Notes are due the Friday before a release deploys. The optional
+`release-notes` routine (several times a weekday) drafts them a day before
+that, or at once when you ask (`releasenotes.py request`, or `r` on TUI screen
+3): it finds the tracker version for the release (`26.9.3 (19-Oct-26)`), reads
+every ticket, marks each customer facing or not with a reason, and drafts a
+note in the house style. One inbox item tells you it is ready. On screen 3 you
+include or drop tickets (space), edit notes (Enter) and approve (`A`), which
+closes the item; on its next run the routine adds the `releasenotes` label,
+fills Release Note and sets Customer-Facing? = Yes on the approved tickets, and
+nothing else. State is `releasenotes/<release>.json`: requested, draft,
+approved, applied. A redraft never overwrites a ticket you edited.
+
 ## Efforts
 
 Items are what arrives; efforts are what you carry: an epic, a customer

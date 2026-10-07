@@ -68,6 +68,14 @@ releases:
   calendar: ""                     # e.g. "Release Calendar"
   title_regex: "^(\\d+\\.\\d+\\.\\d+) Deployments"   # first group = version
 
+# ---- Release notes -------------------------------------------------------------
+# The release-notes routine drafts notes for the next release (dates from
+# `releases` above), you review and approve them on screen 3 of the TUI, and it
+# writes them to the tracker. Needs `releases.calendar` and Atlassian.
+release_notes:
+  project: WSAP                    # the tracker project whose versions carry the releases
+  draft_days_before_due: 1         # notes are due the Friday before deployment; draft this many days earlier
+
 # ---- Slack -------------------------------------------------------------------
 slack:
   lookback_days: 7                 # each commitment scan covers this window (idempotent, so overlap is fine)
@@ -165,6 +173,12 @@ routines:
     template: learn
     cron: "30 17 * * *"
     connectors: [Slack, Atlassian]
+
+  - name: release-notes               # optional; drafts release notes, applies the ones you approve
+    template: release-notes
+    cron: "0 7,10,13,16 * * 1-5"
+    connectors: [Atlassian, Slack]
+    enabled: false
 
   - name: customer-calls              # optional; needs the `colleague` block above
     template: customer-calls

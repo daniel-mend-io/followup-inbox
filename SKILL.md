@@ -166,6 +166,22 @@ closed items. **Only the learn routine writes here; every other routine only
 reads `context`.** The user edits the files by hand: untagged lines and
 `## Pinned` entries are never changed by the script.
 
+## Release notes
+
+```bash
+python3 scripts/releasenotes.py pending --json            # routine: what to draft, what to apply
+python3 scripts/releasenotes.py draft --json < draft.json # routine: write/refresh a draft, opens the inbox item
+python3 scripts/releasenotes.py applied <release> <KEY> [--error "..."]   # routine: after writing to the tracker
+python3 scripts/releasenotes.py list | show [<release>]
+python3 scripts/releasenotes.py request [<release>]       # user: draft now
+python3 scripts/releasenotes.py set <release> <KEY> --include yes|no --note "..."   # user
+python3 scripts/releasenotes.py approve <release> | reopen <release>                # user
+```
+
+**Only the user includes, edits, approves or reopens.** The routine writes to
+the tracker only for tickets of an approved release, and only the label,
+Release Note and Customer-Facing? fields.
+
 ## TUI
 
 ```bash

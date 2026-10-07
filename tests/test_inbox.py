@@ -194,7 +194,7 @@ class StoreTests(unittest.TestCase):
         with open(os.path.join(self.root, "rendered", "manifest.json")) as f:
             names = [r["name"] for r in json.load(f)]
         self.assertEqual(names, ["commitments-morning-midday", "commitments-evening", "loose-threads",
-                                 "jira-comments", "gmail", "efforts", "learn"])
+                                 "jira-comments", "gmail", "efforts", "learn"])   # release-notes is off in the example
         self.assertIn("python3 tool/scripts/knowledge.py context", morning)   # the shared partial, rendered
         self.assertIn("Never write to `knowledge/`", morning)
         with open(os.path.join(self.root, "rendered", "learn.md")) as f:
@@ -211,6 +211,10 @@ class StoreTests(unittest.TestCase):
         self.assertIn('calendar named "Release Calendar"', efforts)
         self.assertIn("`^(\\d+\\.\\d+\\.\\d+) Deployments`", efforts)
         self.assertIn("python3 tool/scripts/releases.py set --json", efforts)
+        notes = run(self.root, "render.py", "--stdout", "release-notes").stdout
+        self.assertIn("python3 tool/scripts/releasenotes.py pending --json", notes)
+        self.assertIn("project = WSAP AND fixVersion", notes)
+        self.assertNotIn("{{", notes)
         for name in ("jira-comments", "gmail", "learn", "efforts", "loose-threads"):
             with open(os.path.join(self.root, "rendered", name + ".md")) as f:
                 self.assertNotIn("{{", f.read())
@@ -328,6 +332,53 @@ class EffortAndTuiTests(unittest.TestCase):
         self.assertIn("Fri", out.split("(")[0])
         it = common.read_item(find(self.root, item(1)["id"]))
         self.assertEqual(common.parse_ts(it["snoozed_until"]).astimezone(common.local_zone({"timezone": "Europe/Warsaw"})).weekday(), 4)
+
+    def test_release_notes_lifecycle(self):
+        rn = lambda *a, **k: run(self.root, "releasenotes.py", *a, **k)  # noqa: E731
+        day = datetime.date.today() + datetime.timedelta(days=4)
+        run(self.root, "releases.py", "set", "--json", stdin=json.dumps([{"version": "26.9.3", "date": day.isoformat()}]))
+        pend = json.loads(rn("pending", "--json").stdout)
+        due = day - datetime.timedelta(days=(day.weekday() - 4) % 7 or 7)
+        expect_draft = due - datetime.timedelta(days=1) <= datetime.date.today()
+        self.assertEqual(bool(pend["to_draft"]), expect_draft)             # inside the window only
+        self.assertIn("requested", rn("request").stdout)                   # the user asks for it now
+        pend = json.loads(rn("pending", "--json").stdout)
+        self.assertEqual([d["release"] for d in pend["to_draft"]], ["26.9.3"])
+        draft = {"release": "26.9.3", "jira_versions": ["26.9.3 (19-Oct-26)"], "tickets": [
+            {"key": "WSAP-1", "summary": "Download CLI", "include": True, "reason": "new feature", "note": "You can now download it."},
+            {"key": "WSAP-2", "summary": "Refactor", "include": False, "reason": "internal", "note": ""}]}
+        out = rn("draft", "--json", stdin=json.dumps(draft)).stdout
+        self.assertIn("1/2 customer facing", out)
+        item = common.read_item(find(self.root, "jira:release-notes/26.9.3"))
+        self.assertEqual((item["status"], item["kind"]), ("ready", "ask"))
+        # the user includes WSAP-2 without a note: approval refuses until it has one
+        rn("set", "26.9.3", "WSAP-2", "--include", "yes")
+        r = rn("approve", "26.9.3", check=False)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("included without a note: WSAP-2", r.stderr)
+        rn("set", "26.9.3", "WSAP-2", "--note", "Scans start faster.")
+        # a redraft keeps the user's edits and takes the routine's new text elsewhere
+        draft["tickets"][0]["note"] = "Download the CLI from My profile."
+        draft["tickets"][1]["include"] = False
+        rn("draft", "--json", stdin=json.dumps(draft))
+        doc = json.loads(open(os.path.join(self.root, "releasenotes", "26.9.3.json")).read())
+        t = {x["key"]: x for x in doc["tickets"]}
+        self.assertEqual((t["WSAP-2"]["include"], t["WSAP-2"]["note"]), (True, "Scans start faster."))
+        self.assertEqual(t["WSAP-1"]["note"], "Download the CLI from My profile.")
+        self.assertIn("approved", rn("approve", "26.9.3").stdout)
+        self.assertIn("/archive/", find(self.root, "jira:release-notes/26.9.3"))   # approving closes the inbox item
+        r = rn("draft", "--json", stdin=json.dumps(draft), check=False)
+        self.assertEqual(r.returncode, 1)                                        # approved: no redraft
+        r = rn("set", "26.9.3", "WSAP-1", "--include", "no", check=False)
+        self.assertIn("reopen it first", r.stderr)
+        pend = json.loads(rn("pending", "--json").stdout)
+        self.assertEqual([d["release"] for d in pend["to_apply"]], ["26.9.3"])
+        self.assertIn("is approved", rn("applied", "26.9.3", "WSAP-1").stdout)
+        self.assertIn("failed", rn("applied", "26.9.3", "WSAP-2", "--error", "field not on screen").stdout)
+        self.assertIn("is applied", rn("applied", "26.9.3", "WSAP-2").stdout)     # retried and done
+        self.assertEqual(json.loads(rn("pending", "--json").stdout)["to_apply"], [])
+        self.assertIn("applied", rn("list").stdout)
+        self.assertIn("reopened", rn("reopen", "26.9.3").stdout)
 
     def test_snooze_hides_until_it_wakes(self):
         run(self.root, "add.py", "--json", stdin=json.dumps([item(1, status="ready"), item(2, status="waiting")]))

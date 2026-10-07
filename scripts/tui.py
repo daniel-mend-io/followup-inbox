@@ -9,6 +9,7 @@ Screens (number keys, Tab / Shift-Tab):
   0  Routines   what is scheduled, when it fires locally today, when it last wrote
   1  Inbox      every open item, sortable; detail pane, triage, copy the draft
   2  Efforts    what you carry; accept suggestions, set next actions
+  3  Release notes  the draft for the next release: include or drop tickets, edit notes, approve
 
 Keys (all screens): j/k or arrows move, J/K or PgDn/PgUp scroll the detail, s sort,
 S reverse, f filter, m status menu, R reload, g git sync, o open link, e edit in $EDITOR,
@@ -16,6 +17,7 @@ S reverse, f filter, m status menu, R reload, g git sync, o open link, e edit in
 Inbox:   d done   x dismiss   z snooze (hide until a day)   Z wake   r ready   w waiting
          n reopen   y copy proposed reply   (f cycles to the `snoozed` filter to see them)
 Efforts: a add    A accept    n next action   N note   p pause/resume   d done   x drop
+Notes:   space include/drop   Enter edit note   A approve   U reopen   r request a draft   [ ] other release
 """
 
 import argparse
@@ -337,7 +339,8 @@ class App:
         self.scr = stdscr
         self.t = Theme()
         self.screen = 1
-        self.sel = {0: 0, 1: 0, 2: 0}
+        self.sel = {0: 0, 1: 0, 2: 0, 3: 0}
+        self.rn_idx = 0
         self.detail_off = 0
         self.sort = {1: 0, 2: 0}
         self.rev = {1: False, 2: False}
@@ -352,12 +355,21 @@ class App:
         self.items = load_all(include_archive=True)
         self.efforts = load_efforts(include_closed=True)
         self.routines = routine_rows(self.config, routine_ids_from_state(), last_writes(self.config))
+        from releasenotes import all_docs
+        self.rn_docs = all_docs()
+        self.rn_idx = max(0, min(self.rn_idx, len(self.rn_docs) - 1))
+
+    def rn_doc(self):
+        return self.rn_docs[self.rn_idx] if self.rn_docs else None
 
     def rows(self):
         if self.screen == 1:
             return inbox_rows(self.items, INBOX_SORTS[self.sort[1]], self.rev[1], INBOX_FILTERS[self.filt[1]])
         if self.screen == 2:
             return effort_rows(self.efforts, EFFORT_SORTS[self.sort[2]], self.rev[2], EFFORT_FILTERS[self.filt[2]])
+        if self.screen == 3:
+            doc = self.rn_doc()
+            return doc["tickets"] if doc else []
         return self.routines
 
     def current(self):
@@ -425,7 +437,7 @@ class App:
         self.fill(0, 0, w, t.a("bar"))
         self.put(0, 1, t.g("☰", "=") + " followup-inbox", t.a("bar", c.A_BOLD))
         x = 20
-        for n, name in enumerate(("Routines", "Inbox", "Efforts")):
+        for n, name in enumerate(("Routines", "Inbox", "Efforts", "Release notes")):
             label = f" {n} {name} "
             attr = t.a("tab_on", c.A_BOLD) if n == self.screen else t.a("bar")
             self.put(0, x, label, attr)
@@ -448,6 +460,18 @@ class App:
                    f"sort {INBOX_SORTS[self.sort[1]]}{' ↓' if self.rev[1] else ''}   filter {INBOX_FILTERS[self.filt[1]]}")
         elif self.screen == 2:
             sub = f"sort {EFFORT_SORTS[self.sort[2]]}{' ↓' if self.rev[2] else ''}   filter {EFFORT_FILTERS[self.filt[2]]}"
+        elif self.screen == 3:
+            doc = self.rn_doc()
+            if doc:
+                from releasenotes import counts
+                cnt = counts(doc)
+                due = dt.date.fromisoformat(doc["due"]).strftime("%a %d %b") if doc.get("due") else "?"
+                versions = ", ".join(doc.get("jira_versions") or []) or doc["release"]
+                sub = (f"{versions}   {doc['status']}   due {due}   {cnt['included']}/{cnt['tickets']} customer facing"
+                       + (f"   {cnt['applied']} applied" if doc["status"] in ("approved", "applied") else "")
+                       + (f"   release {self.rn_idx + 1}/{len(self.rn_docs)}  [ ] to switch" if len(self.rn_docs) > 1 else ""))
+            else:
+                sub = "no release notes yet: r asks the release-notes routine for a draft of the next release"
         else:
             sub = "crons are UTC; 'today' is the local firing time; 'last wrote' is the newest store commit from that scanner"
         self.put(1, 1, sub, t.a("dim"))
@@ -469,6 +493,8 @@ class App:
                 self.draw_inbox_row(yy, x + 2, w - 3, row, base, selected)
             elif self.screen == 2:
                 self.draw_effort_row(yy, x + 2, w - 3, row, base, selected)
+            elif self.screen == 3:
+                self.draw_note_row(yy, x + 2, w - 3, row, base, selected)
             else:
                 self.draw_routine_row(yy, x + 2, w - 3, row, base, selected)
         if len(rows) > h:
@@ -511,6 +537,15 @@ class App:
             title_w -= 2
         self.put(y, x + 18, title[:title_w], base | (c.A_BOLD if selected else 0), title_w)
 
+    def draw_note_row(self, y, x, w, tk, base, selected):
+        c, t = self.t.c, self.t
+        box = "[x]" if tk.get("include") else "[ ]"
+        self.put(y, x, box, base | (t.a("ready", c.A_BOLD) if tk.get("include") and not selected else 0))
+        self.put(y, x + 4, f"{tk['key']:<11}", base | t.a("accent") if not selected else base)
+        mark = t.g("✓", "+") if tk.get("applied") else ("!" if tk.get("apply_error") else (t.g("✎", "*") if tk.get("edited") else " "))
+        self.put(y, x + 16, mark, base | (t.a("reply", c.A_BOLD) if not selected else c.A_BOLD))
+        self.put(y, x + 18, (tk.get("summary") or "")[: w - 18], base | (c.A_BOLD if selected else 0), w - 18)
+
     def draw_routine_row(self, y, x, w, r, base, selected):
         c, t = self.t.c, self.t
         self.put(y, x, t.g("●", "*") if r["enabled"] else t.g("○", "o"), base | (t.a("ready") if r["enabled"] else t.a("closed")))
@@ -526,6 +561,8 @@ class App:
             title = f"{cur.get('source')} {t.g('·', '/')} {KIND_LABEL.get(cur.get('kind'), cur.get('kind'))}"
         elif self.screen == 2:
             title = f"effort {t.g('·', '/')} {cur.get('kind')}"
+        elif self.screen == 3:
+            title = f"{cur['key']} {t.g('·', '/')} {'customer facing' if cur.get('include') else 'internal'}"
         else:
             title = "routine"
         self.box(y, x, h, w, title, t.a("dim"))
@@ -596,6 +633,28 @@ class App:
                 L.append((t.g("─", "-") * w, t.a("dim")))
                 for ln in wrap(cur["body"], w):
                     L.append((ln, 0))
+        elif self.screen == 3:
+            for ln in wrap(cur.get("summary") or "", w):
+                L.append((ln, bold))
+            L.append(("", 0))
+            state = ("applied" if cur.get("applied") else f"failed: {cur['apply_error']}" if cur.get("apply_error")
+                     else "edited by you" if cur.get("edited") else "as drafted")
+            for k, v in (("type", cur.get("type")), ("status", cur.get("status")), ("link", cur.get("url")),
+                         ("state", state), ("why", cur.get("reason"))):
+                if v:
+                    for n, ln in enumerate(wrap(str(v), w - 10)):
+                        L.append(((f"{k:<8}" if n == 0 else " " * 8) + "  " + ln, t.a("dim") if n else 0))
+            L.append(("", 0))
+            if cur.get("include"):
+                L.append((f"{t.g('✎', '*')} release note   (Enter to edit, space to drop)", t.a("reply", bold)))
+                L.append((t.g("─", "-") * w, t.a("reply")))
+                for ln in wrap(cur.get("note") or "(no note yet: Enter to write one)", w - 2):
+                    L.append((t.g("┃ ", "| ") + ln, t.a("reply")))
+            else:
+                L.append(("not in the release notes   (space to include)", t.a("dim")))
+                if cur.get("note"):
+                    for ln in wrap(cur["note"], w - 2):
+                        L.append((t.g("┃ ", "| ") + ln, t.a("dim")))
         else:
             L.append((cur["name"], bold))
             L.append(("", 0))
@@ -625,6 +684,9 @@ class App:
         elif self.screen == 2:
             keys = [("A", "accept"), ("n", "next"), ("N", "note"), ("a", "add"), ("p", "pause"), ("d", "done"),
                     ("x", "drop"), ("o", "open"), ("e", "edit"), ("s", "sort"), ("f", "filter"), ("g", "sync")]
+        elif self.screen == 3:
+            keys = [("space", "include"), ("Enter", "edit note"), ("A", "approve"), ("U", "reopen"), ("r", "request draft"),
+                    ("[ ]", "release"), ("o", "open"), ("g", "sync")]
         else:
             keys = [("o", "routines page"), ("R", "reload"), ("q", "quit")]
         x = 1
@@ -740,8 +802,8 @@ class App:
         self.reload()
 
     def help(self):
-        self.say("0/1/2 screens · j/k move · J/K scroll detail · Enter/m status menu · s/S sort · f filter · R reload · g sync · o open · e edit · q quit"
-                 "  |  Inbox: d done x dismiss z snooze Z wake r ready w waiting n reopen y copy  |  Efforts: a add A accept n next N note p pause d done x drop")
+        self.say("0/1/2/3 screens · j/k move · J/K scroll detail · Enter/m status menu · s/S sort · f filter · R reload · g sync · o open · e edit · q quit"
+                 "  |  Inbox: d done x dismiss z snooze Z wake r ready w waiting n reopen y copy  |  Efforts: a add A accept n next N note p pause d done x drop  |  Notes: space include Enter edit A approve U reopen r request [ ] release")
 
     # actions -----------------------------------------------------------------
     def set_item_status(self, cur, new):
@@ -830,10 +892,14 @@ class App:
                     self.say(out, not ok)
                     self.reload()
                 return
+        if self.screen == 3:
+            if self.act_notes(key, cur):
+                return
         if key == "g":
             self.say("syncing…")
             self.draw()
-            ok, out = run_script("sync.py", "-m", "triage", "items", "archive", "efforts", "knowledge", "INBOX.md")
+            ok, out = run_script("sync.py", "-m", "triage", "items", "archive", "efforts", "knowledge", "releasenotes",
+                                 "state/releases.json", "INBOX.md")
             self.say(out, not ok)
             self.reload()
             return
@@ -841,9 +907,55 @@ class App:
             url = (cur or {}).get("url") if self.screen != 0 else "https://claude.ai/code/routines"
             self.say("opened in the browser" if open_url(url) else "no link on this one", not url)
             return
-        if key == "e" and cur and self.screen != 0:
+        if key == "e" and cur and self.screen in (1, 2):
             self.edit_in_editor(cur["_path"])
             return
+
+    def act_notes(self, key, cur):
+        """Keys on the release-notes screen. True when the key was handled."""
+        doc = self.rn_doc()
+        if key in ("[", "]"):
+            if self.rn_docs:
+                self.rn_idx = (self.rn_idx + (1 if key == "]" else -1)) % len(self.rn_docs)
+                self.sel[3] = 0
+            return True
+        if key == "r":
+            ok, out = run_script("releasenotes.py", "request")
+            self.say(out + ("   (the release-notes routine drafts it on its next run; g to sync first)" if ok else ""), not ok)
+            self.reload()
+            return True
+        if not doc:
+            return key in (" ", "m", "A", "U")
+        if key == "A":
+            if self.pick(f"approve {doc['release']}? the routine then writes to the tracker", ["no", "yes"]) != "yes":
+                self.say("not approved")
+                return True
+            ok, out = run_script("releasenotes.py", "approve", doc["release"])
+            self.say(out + ("   (g to sync, so the routine sees it)" if ok else ""), not ok)
+            self.reload()
+            return True
+        if key == "U":
+            ok, out = run_script("releasenotes.py", "reopen", doc["release"])
+            self.say(out, not ok)
+            self.reload()
+            return True
+        if cur and key == " ":
+            ok, out = run_script("releasenotes.py", "set", doc["release"], cur["key"],
+                                 "--include", "no" if cur.get("include") else "yes")
+            self.say(out, not ok)
+            self.reload()
+            return True
+        if cur and key == "m":
+            text = self.prompt(f"release note for {cur['key']}", cur.get("note") or "")
+            if text is None:
+                self.say("cancelled")
+                return True
+            args = ["--note", text] + ([] if cur.get("include") or not text else ["--include", "yes"])
+            ok, out = run_script("releasenotes.py", "set", doc["release"], cur["key"], *args)
+            self.say(out, not ok)
+            self.reload()
+            return True
+        return False
 
     # main loop --------------------------------------------------------------
     def run(self):
@@ -857,12 +969,12 @@ class App:
                 return
             if ch == c.KEY_RESIZE:
                 continue
-            if ch in (ord("0"), ord("1"), ord("2")):
+            if ch in (ord("0"), ord("1"), ord("2"), ord("3")):
                 self.screen = ch - ord("0"); self.detail_off = 0
             elif ch == 9:
-                self.screen = (self.screen + 1) % 3; self.detail_off = 0
+                self.screen = (self.screen + 1) % 4; self.detail_off = 0
             elif ch == c.KEY_BTAB:
-                self.screen = (self.screen - 1) % 3; self.detail_off = 0
+                self.screen = (self.screen - 1) % 4; self.detail_off = 0
             elif ch in (ord("j"), c.KEY_DOWN):
                 self.sel[self.screen] += 1; self.detail_off = 0
             elif ch in (ord("k"), c.KEY_UP):
