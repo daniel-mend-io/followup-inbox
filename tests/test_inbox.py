@@ -202,6 +202,15 @@ class StoreTests(unittest.TestCase):
         self.assertIn("python3 tool/scripts/knowledge.py pending --json", learn)
         self.assertIn("at most 30", learn)                       # learn defaults reach the prompt
         self.assertIn("/tree/main/knowledge", learn)
+        with open(os.path.join(self.root, "rendered", "efforts.md")) as f:
+            self.assertNotIn("Refresh the release dates", f.read())      # off while releases.calendar is empty
+        cfg_on = cfg.replace('  calendar: ""', '  calendar: "Release Calendar"')
+        with open(os.path.join(self.root, "config.yml"), "w") as f:
+            f.write(cfg_on)
+        efforts = run(self.root, "render.py", "--stdout", "efforts").stdout
+        self.assertIn('calendar named "Release Calendar"', efforts)
+        self.assertIn("`^(\\d+\\.\\d+\\.\\d+) Deployments`", efforts)
+        self.assertIn("python3 tool/scripts/releases.py set --json", efforts)
         for name in ("jira-comments", "gmail", "learn", "efforts", "loose-threads"):
             with open(os.path.join(self.root, "rendered", name + ".md")) as f:
                 self.assertNotIn("{{", f.read())
@@ -277,6 +286,45 @@ class EffortAndTuiTests(unittest.TestCase):
         for bad in ("0", "2026-10-01", "soon", "31.02"):
             with self.assertRaises(common.InboxError, msg=bad):
                 parse_when(bad, cfg, now)
+
+    def test_snooze_to_next_release(self):
+        import releases, snooze
+        self.assertEqual(releases.friday_before(datetime.date(2026, 10, 18)), datetime.date(2026, 10, 16))  # Sunday
+        self.assertEqual(releases.friday_before(datetime.date(2026, 10, 19)), datetime.date(2026, 10, 16))  # Monday
+        self.assertEqual(releases.friday_before(datetime.date(2026, 10, 16)), datetime.date(2026, 10, 9))   # never the same day
+        cfg = {"timezone": "Europe/Warsaw", "working_hours": "09:00-18:00"}
+        data = {"updated_at": "2026-10-07T08:00:00Z", "releases": [
+            {"version": "26.9.2", "date": "2026-10-04"}, {"version": "26.9.3", "date": "2026-10-18"},
+            {"version": "26.10.1", "date": "2026-11-01"}]}
+        wake = lambda d: snooze._start_of_day(d, cfg)  # noqa: E731
+        fmt = lambda when: when.astimezone(common.local_zone(cfg)).strftime("%a %Y-%m-%d %H:%M")  # noqa: E731
+        wed = common.parse_ts("2026-10-07T08:00:00Z")
+        self.assertEqual(fmt(releases.upcoming(wake, wed, data)[0]["wake"]), "Fri 2026-10-16 09:00")
+        sat = common.parse_ts("2026-10-17T08:00:00Z")   # that Friday has passed: the release after it
+        self.assertEqual(fmt(releases.upcoming(wake, sat, data)[0]["wake"]), "Fri 2026-10-30 09:00")
+        self.assertIsNone(releases.stale_warning(data, wed))
+        self.assertIn("may be out of date", releases.stale_warning(data, common.parse_ts("2026-11-01T00:00:00Z")))
+
+    def test_next_release_end_to_end(self):
+        with open(os.path.join(self.root, "config.yml"), "w") as f:
+            f.write('timezone: Europe/Warsaw\nworking_hours: "09:00-18:00"\n')
+        run(self.root, "add.py", "--json", stdin=json.dumps(item(1, status="ready")))
+        r = run(self.root, "snooze.py", item(1)["id"], "next-release", check=False)
+        self.assertEqual(r.returncode, 1)                                   # no release dates yet
+        self.assertIn("no upcoming release known", r.stderr)
+        soon = (datetime.date.today() + datetime.timedelta(days=12)).isoformat()
+        later = (datetime.date.today() + datetime.timedelta(days=40)).isoformat()
+        out = run(self.root, "releases.py", "set", "--json",
+                  stdin=json.dumps([{"version": "26.10.1", "date": later}, {"version": "26.9.3", "date": soon}])).stdout
+        self.assertIn("saved 2 releases", out)
+        bad = run(self.root, "releases.py", "set", "--json", stdin=json.dumps([{"version": "v1", "date": soon}]), check=False)
+        self.assertEqual(bad.returncode, 1)
+        self.assertIn("26.9.3", run(self.root, "releases.py", "next").stdout)
+        out = run(self.root, "snooze.py", item(1)["id"], "next-release").stdout
+        self.assertIn("(before 26.9.3, deploying", out)
+        self.assertIn("Fri", out.split("(")[0])
+        it = common.read_item(find(self.root, item(1)["id"]))
+        self.assertEqual(common.parse_ts(it["snoozed_until"]).astimezone(common.local_zone({"timezone": "Europe/Warsaw"})).weekday(), 4)
 
     def test_snooze_hides_until_it_wakes(self):
         run(self.root, "add.py", "--json", stdin=json.dumps([item(1, status="ready"), item(2, status="waiting")]))

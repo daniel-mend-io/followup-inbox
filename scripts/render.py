@@ -94,6 +94,8 @@ def build_context(config, routine):
     ctx["knowledge_link"] = f"{repo_url}/tree/{cfg_get(config, 'git.branch', 'main')}/knowledge"
     from knowledge import DEFAULTS as learn_defaults
     ctx["learn"] = {**learn_defaults, **(config.get("learn") or {})}
+    ctx["releases"] = {"calendar": "", "title_regex": r"^(\d+\.\d+\.\d+) Deployments",
+                       **(config.get("releases") or {})}
     return ctx
 
 

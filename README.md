@@ -122,8 +122,12 @@ what we write.
 
 `snooze.py <id> <when>` hides an open item until a day you pick: a number of
 days (`3`, `2w`, `4h`), `tomorrow`, a weekday (`fri`, the next one), `next-week`
-or a date (`2026-10-14`, `14.10`). A day wakes at the start of
-`working_hours` in your timezone. The item keeps its status; it is only left
+a date (`2026-10-14`, `14.10`), or `next-release`: the Friday before the
+next release deploys. A day wakes at the start of `working_hours` in your
+timezone. Release dates come from `state/releases.json`, which the efforts
+routine refreshes from the calendar named in `releases.calendar` (events
+matching `releases.title_regex`, e.g. "26.9.3 Deployments"), since snoozing
+happens where there is no calendar; `releases.py list` shows them. The item keeps its status; it is only left
 out of `list.py`, the digest (which lists snoozed items in a section of their
 own) and the TUI's open list until then, and comes back by itself, marked
 "back from snooze" for a day. Nothing has to run to wake it. Because routines

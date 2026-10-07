@@ -773,7 +773,7 @@ class App:
                 if cur.get("status") not in OPEN_STATUSES:
                     self.say("only open items can be snoozed", True)
                     return
-                when = self.prompt("snooze until: 3 · 2w · 4h · tomorrow · fri · next-week · 14.10 · 2026-10-14")
+                when = self.prompt("snooze until: 3 · 2w · 4h · tomorrow · fri · next-week · next-release · 14.10")
                 if not when:
                     self.say("cancelled")
                     return

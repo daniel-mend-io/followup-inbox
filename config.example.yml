@@ -60,6 +60,14 @@ learn:
   examples_kept: 20                # drafted-vs-sent pairs kept in knowledge/examples/
   examples_in_context: 8           # how many of them the drafting routines read
 
+# ---- Releases ----------------------------------------------------------------
+# Lets you snooze an item to "next-release": it wakes on the Friday before the
+# next release deploys. The efforts routine reads the dates from this calendar
+# (needs the Google-Calendar connector). Leave `calendar` empty to turn it off.
+releases:
+  calendar: ""                     # e.g. "Release Calendar"
+  title_regex: "^(\\d+\\.\\d+\\.\\d+) Deployments"   # first group = version
+
 # ---- Slack -------------------------------------------------------------------
 slack:
   lookback_days: 7                 # each commitment scan covers this window (idempotent, so overlap is fine)

@@ -5,6 +5,7 @@ Usage:
   ./snooze.py <id> 3              # 3 days        (also 3d, 2w, 4h)
   ./snooze.py <id> tomorrow       # also: mon … sun (the next one), next-week (Monday)
   ./snooze.py <id> 2026-10-14     # a date        (also 14.10 or 14.10.2026)
+  ./snooze.py <id> next-release   # the Friday before the next release deploys (see releases.py)
   ./snooze.py <id> --wake         # bring it back now
 
 A day or date wakes the item at the start of working hours (config
@@ -19,6 +20,7 @@ import argparse
 import datetime as dt
 import os
 import re
+import sys
 
 from _inbox_common import (CLOSED_STATUSES, InboxError, cfg_get, die, find_path, iso_utc, load_config,
                            local_zone, now_utc, read_item, rel, write_item)
@@ -53,6 +55,12 @@ def parse_when(text, config=None, now=None):
         day = today + dt.timedelta(days=n * (7 if unit == "w" else 1))
     elif s in ("tomorrow", "tmr", "jutro"):
         day = today + dt.timedelta(days=1)
+    elif s in ("next-release", "nextrelease", "release", "nr"):
+        from releases import stale_warning, upcoming
+        rows = upcoming(lambda d: _start_of_day(d, config), now)
+        if not rows:
+            raise InboxError("no upcoming release known" + (f" ({stale_warning()})" if stale_warning() else ""))
+        return rows[0]["wake"]
     elif s in ("next-week", "nextweek", "nw"):
         day = today + dt.timedelta(days=7 - today.weekday())
     elif s in WEEKDAYS:
@@ -70,7 +78,7 @@ def parse_when(text, config=None, now=None):
         if len(parts) == 2 and day <= today:
             day = day.replace(year=year + 1)  # 14.10 in November means next year
     else:
-        raise InboxError(f"cannot read {text!r}; try 3, 2w, 4h, tomorrow, fri, next-week, 2026-10-14 or 14.10")
+        raise InboxError(f"cannot read {text!r}; try 3, 2w, 4h, tomorrow, fri, next-week, next-release, 2026-10-14 or 14.10")
     when = _start_of_day(day, config)
     if when <= now:
         raise InboxError(f"{when:%Y-%m-%d %H:%M} is not in the future")
@@ -115,7 +123,14 @@ def main():
             print(f"woken\t{rel(path)}")
         else:
             local = when.astimezone(local_zone(config))
-            print(f"snoozed until {local:%a %d %b %H:%M}\t{rel(path)}")
+            note = ""
+            if args.when.strip().lower() in ("next-release", "nextrelease", "release", "nr"):
+                from releases import stale_warning, upcoming
+                nxt = upcoming(lambda d: _start_of_day(d, config))[0]
+                note = f" (before {nxt['version']}, deploying {dt.date.fromisoformat(nxt['date']):%a %d %b})"
+                if stale_warning():
+                    print(f"warning: {stale_warning()}", file=sys.stderr)
+            print(f"snoozed until {local:%a %d %b %H:%M}{note}\t{rel(path)}")
     except InboxError as e:
         die(str(e))
 

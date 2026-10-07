@@ -10,6 +10,9 @@ Every command below is run from the repository root.
 
 {{> knowledge}}
 
+{{#if releases.calendar}}{{> releases}}
+
+{{/if}}
 ## 1. Read what exists
 
 ```
