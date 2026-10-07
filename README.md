@@ -68,6 +68,7 @@ url: "https://…"                             # deep link back to the source
 actor: Alex                                  # who is waiting on you
 trigger: after the 8.5 release               # null if none stated
 status: waiting                              # new | waiting | ready | done | dismissed
+snoozed_until: 2026-10-09T07:00:00Z          # hidden until then; absent unless snoozed
 resolution: answered in thread               # the user's note on closing; absent until then
 ---
 
@@ -100,6 +101,7 @@ item stays closed however many times its source is re-scanned.
 | proposed reply | replace freely (`draft.py`) | edit the file |
 | status | only `new/waiting → ready`, with `--note` | anything (`status.py`) |
 | resolution | never | `status.py … done --note "…"`, or the TUI's prompt on close |
+| snoozed_until | never | `snooze.py <id> 3` / `fri` / `14.10`, `--wake`; `z` / `Z` in the TUI |
 
 Status is the human's. `done` and `dismissed` move the file to
 `archive/YYYY-MM/` so the working set stays small; reopening needs
@@ -115,6 +117,19 @@ line, JSON-quoted when needed) so any YAML or frontmatter library reads it,
 and `scripts/list.py --json` gives the same records as JSON. A TUI or any
 other client builds on either; `tests/` checks that a real YAML parser accepts
 what we write.
+
+## Snoozing
+
+`snooze.py <id> <when>` hides an open item until a day you pick: a number of
+days (`3`, `2w`, `4h`), `tomorrow`, a weekday (`fri`, the next one), `next-week`
+or a date (`2026-10-14`, `14.10`). A day wakes at the start of
+`working_hours` in your timezone. The item keeps its status; it is only left
+out of `list.py`, the digest (which lists snoozed items in a section of their
+own) and the TUI's open list until then, and comes back by itself, marked
+"back from snooze" for a day. Nothing has to run to wake it. Because routines
+build their working sets with `list.py`, they leave a snoozed item alone: no
+redrafting, no nagging. It stays in `list.py --all --ids`, so it is never
+re-raised as new. `--wake` brings it back early; closing it ends the snooze.
 
 ## Efforts
 

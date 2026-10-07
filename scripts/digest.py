@@ -13,8 +13,8 @@ import datetime as dt
 import os
 import sys
 
-from _inbox_common import (ARCHIVE_DIR, DIGEST_PATH, OPEN_STATUSES, SOURCES, load_all, load_config,
-                           load_efforts, local_zone, now_utc, parse_ts, rel, sort_newest_first)
+from _inbox_common import (ARCHIVE_DIR, DIGEST_PATH, OPEN_STATUSES, SOURCES, is_snoozed, load_all,
+                           load_config, load_efforts, woke_recently, local_zone, now_utc, parse_ts, rel, sort_newest_first)
 
 STATUS_ORDER = ("ready", "waiting", "new")   # most actionable first
 STATUS_BLURB = {
@@ -28,7 +28,9 @@ def render(items, config):
     tz = local_zone(config)
     tzname = getattr(tz, "key", "UTC")
     now = now_utc().astimezone(tz)
-    open_items = [it for it in items if it.get("status") in OPEN_STATUSES]
+    all_open = [it for it in items if it.get("status") in OPEN_STATUSES]
+    snoozed = [it for it in all_open if is_snoozed(it)]
+    open_items = [it for it in all_open if not is_snoozed(it)]
     lines = ["# Inbox", "",
              f"_Generated {now.strftime('%Y-%m-%d %H:%M')} {tzname}. Do not edit; run `scripts/digest.py`._",
              ""]
@@ -36,7 +38,8 @@ def render(items, config):
     drafts = sum(1 for it in open_items if it.get("proposed_reply"))
     lines.append(f"**Open: {len(open_items)}** — " +
                  ", ".join(f"{counts[s]} {s}" for s in STATUS_ORDER) +
-                 (f"; {drafts} with a proposed reply" if drafts else ""))
+                 (f"; {drafts} with a proposed reply" if drafts else "") +
+                 (f". Snoozed: {len(snoozed)}" if snoozed else ""))
     lines.append("")
 
     for status in STATUS_ORDER:
@@ -54,7 +57,7 @@ def render(items, config):
             for it in sub:
                 created = parse_ts(it["created_at"]).astimezone(tz).strftime("%Y-%m-%d")
                 bits = [f"- {created}", f"**{it['kind']}**", f"[{it['title']}]({rel(it['_path'])})"]
-                tail = []
+                tail = ["**back from snooze**"] if woke_recently(it) else []
                 if it.get("actor"):
                     tail.append(f"waiting: {it['actor']}")
                 if it.get("trigger"):
@@ -65,6 +68,14 @@ def render(items, config):
                     tail.append(f"[source]({it['url']})")
                 lines.append(" ".join(bits) + (" — " + "; ".join(tail) if tail else ""))
             lines.append("")
+
+    if snoozed:
+        lines.append(f"## snoozed ({len(snoozed)}) — hidden until the date shown")
+        lines.append("")
+        for it in sorted(snoozed, key=lambda i: parse_ts(i["snoozed_until"])):
+            back = parse_ts(it["snoozed_until"]).astimezone(tz).strftime("%a %Y-%m-%d")
+            lines.append(f"- back {back}: **{it['kind']}** [{it['title']}]({rel(it['_path'])})")
+        lines.append("")
 
     efforts = load_efforts(include_closed=False)
     if efforts:

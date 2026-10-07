@@ -137,6 +137,7 @@ git pull
 python3 tool/scripts/list.py                  # what is open, newest first
 python3 tool/scripts/status.py "<id>" done --note "how it was resolved"   # I did it
 python3 tool/scripts/status.py "<id>" dismissed --note "why"              # not a real thing, drop it
+python3 tool/scripts/snooze.py "<id>" fri                                  # not now: hide it until Friday
 python3 tool/scripts/sync.py -m "triage"      # save and upload your decisions
 ```
 

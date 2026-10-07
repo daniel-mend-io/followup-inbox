@@ -61,8 +61,8 @@ CLOSED_STATUSES = ("done", "dismissed")
 # Frontmatter keys, in the order they are written. Mirrors the inbox_items
 # columns; `body` and `proposed_reply` live in the Markdown body instead.
 FIELDS = ("id", "source", "kind", "created_at", "seen_at", "title", "url",
-          "actor", "trigger", "status", "resolution", "meta")
-OPTIONAL_FIELDS = ("resolution", "meta")   # omitted from the file when empty
+          "actor", "trigger", "status", "snoozed_until", "resolution", "meta")
+OPTIONAL_FIELDS = ("snoozed_until", "resolution", "meta")   # omitted from the file when empty
 REQUIRED = ("id", "source", "kind", "created_at", "title")
 
 PROPOSED_HEADING = "## Proposed reply"
@@ -379,6 +379,18 @@ def archive_dir_for(dt=None):
 
 def rel(path):
     return os.path.relpath(path, REPO_ROOT)
+
+
+def is_snoozed(item, now=None):
+    """True while an open item is snoozed: hidden from lists until `snoozed_until`."""
+    until = parse_ts(item.get("snoozed_until"))
+    return bool(until) and item.get("status") in OPEN_STATUSES and until > (now or now_utc())
+
+
+def woke_recently(item, hours=24, now=None):
+    """The snooze ran out in the last `hours`: the item just came back."""
+    until, now = parse_ts(item.get("snoozed_until")), now or now_utc()
+    return bool(until) and now - _dt.timedelta(hours=hours) <= until <= now
 
 
 def sort_newest_first(items):

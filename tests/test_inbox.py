@@ -258,6 +258,68 @@ class EffortAndTuiTests(unittest.TestCase):
         self.assertIn("## efforts (1 open)", digest)
         self.assertIn("write one-pager (due 2026-10-05)", digest)
 
+    def test_snooze_parsing(self):
+        from snooze import parse_when
+        cfg = {"timezone": "Europe/Warsaw", "working_hours": "09:00-18:00"}
+        now = common.parse_ts("2026-10-07T08:00:00Z")          # Wednesday 10:00 in Warsaw
+        local = lambda w: parse_when(w, cfg, now).astimezone(common.local_zone(cfg)).strftime("%a %Y-%m-%d %H:%M")  # noqa: E731
+        self.assertEqual(local("3"), "Sat 2026-10-10 09:00")
+        self.assertEqual(local("3d"), "Sat 2026-10-10 09:00")
+        self.assertEqual(local("2w"), "Wed 2026-10-21 09:00")
+        self.assertEqual(local("4h"), "Wed 2026-10-07 14:00")
+        self.assertEqual(local("tomorrow"), "Thu 2026-10-08 09:00")
+        self.assertEqual(local("fri"), "Fri 2026-10-09 09:00")
+        self.assertEqual(local("Wednesday"), "Wed 2026-10-14 09:00")  # today's weekday means next week
+        self.assertEqual(local("next-week"), "Mon 2026-10-12 09:00")
+        self.assertEqual(local("2026-10-14"), "Wed 2026-10-14 09:00")
+        self.assertEqual(local("14.10"), "Wed 2026-10-14 09:00")
+        self.assertEqual(local("1.10"), "Fri 2027-10-01 09:00")       # already past this year: next year
+        for bad in ("0", "2026-10-01", "soon", "31.02"):
+            with self.assertRaises(common.InboxError, msg=bad):
+                parse_when(bad, cfg, now)
+
+    def test_snooze_hides_until_it_wakes(self):
+        run(self.root, "add.py", "--json", stdin=json.dumps([item(1, status="ready"), item(2, status="waiting")]))
+        sid = item(1)["id"]
+        out = run(self.root, "snooze.py", sid, "3").stdout
+        self.assertTrue(out.startswith("snoozed until"), out)
+        self.assertEqual(run(self.root, "list.py", "--ids").stdout.split(), [item(2)["id"]])
+        self.assertEqual(run(self.root, "list.py", "--snoozed", "--ids").stdout.split(), [sid])
+        self.assertIn(sid, run(self.root, "list.py", "--all", "--ids").stdout.split())   # the dedupe set keeps it
+        run(self.root, "digest.py")
+        with open(os.path.join(self.root, "INBOX.md")) as f:
+            digest = f.read()
+        self.assertIn("Snoozed: 1", digest)
+        self.assertIn("## snoozed (1)", digest)
+        from tui import inbox_rows
+        items = [common.read_item(find(self.root, i["id"])) for i in (item(1), item(2))]
+        self.assertEqual([i["id"] for i in inbox_rows(items)], [item(2)["id"]])
+        self.assertEqual([i["id"] for i in inbox_rows(items, filt="snoozed")], [sid])
+        self.assertEqual([i["id"] for i in inbox_rows(items, filt="ready")], [])
+        # a routine re-scanning the same message must not drop the snooze, nor change the status
+        run(self.root, "add.py", "--json", stdin=json.dumps([item(1, trigger="after release")]))
+        it = common.read_item(find(self.root, sid))
+        self.assertTrue(common.is_snoozed(it))
+        self.assertEqual(it["status"], "ready")
+        # time passes: the snooze runs out and the item is back, marked
+        path = find(self.root, sid)
+        it["snoozed_until"] = common.iso_utc(common.now_utc() - datetime.timedelta(hours=1))
+        common.write_item(path, it)
+        self.assertIn(sid, run(self.root, "list.py", "--ids").stdout.split())
+        run(self.root, "digest.py")
+        with open(os.path.join(self.root, "INBOX.md")) as f:
+            self.assertIn("**back from snooze**", f.read())
+        # wake by hand, and closing ends a snooze
+        run(self.root, "snooze.py", item(2)["id"], "fri")
+        self.assertTrue(run(self.root, "snooze.py", item(2)["id"], "--wake").stdout.startswith("woken"))
+        self.assertIn("woken by hand", common.read_item(find(self.root, item(2)["id"]))["body"])
+        run(self.root, "snooze.py", item(2)["id"], "2w")
+        run(self.root, "status.py", item(2)["id"], "done")
+        self.assertIsNone(common.read_item(find(self.root, item(2)["id"])).get("snoozed_until"))
+        r = run(self.root, "snooze.py", item(2)["id"], "3", check=False)
+        self.assertEqual(r.returncode, 1)                                  # closed items cannot be snoozed
+        self.assertIn("only open items", r.stderr)
+
     def test_tui_text_box_inserts_instead_of_overwriting(self):
         from tui import LineEditor
         keys = {"LEFT": 260, "RIGHT": 261, "HOME": 262, "END": 360, "BACKSPACE": 263, "DC": 330, "UP": 259, "DOWN": 258}

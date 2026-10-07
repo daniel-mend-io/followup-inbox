@@ -13,7 +13,8 @@ Screens (number keys, Tab / Shift-Tab):
 Keys (all screens): j/k or arrows move, J/K or PgDn/PgUp scroll the detail, s sort,
 S reverse, f filter, m status menu, R reload, g git sync, o open link, e edit in $EDITOR,
 ? help, q quit.
-Inbox:   d done   x dismiss   r ready   w waiting   n reopen   y copy proposed reply
+Inbox:   d done   x dismiss   z snooze (hide until a day)   Z wake   r ready   w waiting
+         n reopen   y copy proposed reply   (f cycles to the `snoozed` filter to see them)
 Efforts: a add    A accept    n next action   N note   p pause/resume   d done   x drop
 """
 
@@ -27,15 +28,15 @@ import subprocess
 import sys
 import textwrap
 
-from _inbox_common import (EFFORT_STATUSES, OPEN_STATUSES, REPO_ROOT, STATUSES, InboxError, git,
-                           load_all, load_config, load_efforts, local_zone, now_utc, parse_ts, rel)
+from _inbox_common import (EFFORT_STATUSES, OPEN_STATUSES, REPO_ROOT, STATUSES, InboxError, git, is_snoozed,
+                           woke_recently, load_all, load_config, load_efforts, local_zone, now_utc, parse_ts, rel)
 
 SCRIPTS = os.path.dirname(os.path.abspath(__file__))
 STATE_IDS = os.path.join(REPO_ROOT, "state", "routine-ids.md")
 RENDERED = os.path.join(REPO_ROOT, "rendered")
 
 INBOX_SORTS = ("newest", "oldest", "status", "source", "kind", "actor", "age")
-INBOX_FILTERS = ("open", "ready", "waiting", "new", "all")
+INBOX_FILTERS = ("open", "ready", "waiting", "new", "snoozed", "all")
 EFFORT_SORTS = ("status", "due", "touched", "kind", "title")
 EFFORT_FILTERS = ("open", "suggested", "active", "paused", "all")
 
@@ -60,9 +61,14 @@ def fmt_age(created_at):
 
 
 def inbox_rows(items, sort="newest", reverse=False, filt="open"):
+    """Snoozed items show only under the `snoozed` and `all` filters."""
+    if filt == "snoozed":
+        items = [i for i in items if is_snoozed(i)]
+    elif filt != "all":
+        items = [i for i in items if not is_snoozed(i)]
     if filt == "open":
         items = [i for i in items if i.get("status") in OPEN_STATUSES]
-    elif filt != "all":
+    elif filt not in ("all", "snoozed"):
         items = [i for i in items if i.get("status") == filt]
     status_rank = {s: n for n, s in enumerate(("ready", "new", "waiting", "done", "dismissed"))}
     keyfn = {
@@ -424,12 +430,14 @@ class App:
             attr = t.a("tab_on", c.A_BOLD) if n == self.screen else t.a("bar")
             self.put(0, x, label, attr)
             x += len(label) + 1
-        open_items = [i for i in self.items if i.get("status") in OPEN_STATUSES]
+        open_items = [i for i in self.items if i.get("status") in OPEN_STATUSES and not is_snoozed(i)]
+        n_snoozed = sum(1 for i in self.items if is_snoozed(i))
         counts = {s: sum(1 for i in open_items if i["status"] == s) for s in ("ready", "waiting", "new")}
         drafts = sum(1 for i in open_items if i.get("proposed_reply"))
         sugg = sum(1 for e in self.efforts if e.get("status") == "suggested")
         right = (f"{counts['ready']} ready {t.g('·', '|')} {counts['waiting']} waiting {t.g('·', '|')} "
-                 f"{counts['new']} new {t.g('·', '|')} {drafts} drafts {t.g('·', '|')} {sugg} suggested efforts")
+                 f"{counts['new']} new {t.g('·', '|')} {drafts} drafts {t.g('·', '|')} {sugg} suggested efforts"
+                 + (f" {t.g('·', '|')} {n_snoozed} snoozed" if n_snoozed else ""))
         tz = local_zone(self.config)
         clock = now_utc().astimezone(tz).strftime("%a %d %b %H:%M")
         self.put(0, max(x + 2, w - len(right) - len(clock) - 4), right, t.a("bar"))
@@ -480,6 +488,10 @@ class App:
         self.put(y, x + 22, f"{who:<12}", base | (t.a("accent") if not selected else 0))
         title_w = w - 36
         title = it.get("title") or ""
+        if is_snoozed(it):
+            title = t.g("☾ ", "z ") + parse_ts(it["snoozed_until"]).astimezone(local_zone(self.config)).strftime("%d %b  ") + title
+        elif woke_recently(it):
+            title = t.g("↺ ", "^ ") + title
         if it.get("proposed_reply"):
             self.put(y, x + w - 1, t.g("✎", "*"), base | t.a("reply", c.A_BOLD))
             title_w -= 2
@@ -542,7 +554,11 @@ class App:
             created = parse_ts(cur["created_at"]).astimezone(tz).strftime("%a %d %b %Y %H:%M")
             meta = [("who", cur.get("actor")), ("trigger", cur.get("trigger")),
                     ("created", f"{created}  ({fmt_age(cur['created_at'])} ago)"), ("id", cur.get("id")),
-                    ("link", cur.get("url")), ("resolved", cur.get("resolution"))]
+                    ("link", cur.get("url")), ("resolved", cur.get("resolution")),
+                    ("snoozed", ("until " + parse_ts(cur["snoozed_until"]).astimezone(tz).strftime("%a %d %b %H:%M"))
+                     if is_snoozed(cur) else None),
+                    ("back", "from snooze, " + parse_ts(cur["snoozed_until"]).astimezone(tz).strftime("%a %d %b %H:%M")
+                     if woke_recently(cur) else None)]
             for k, v in meta:
                 if v:
                     for n, ln in enumerate(wrap(str(v), w - 10)):
@@ -604,7 +620,7 @@ class App:
     def draw_footer(self, h, w):
         c, t = self.t.c, self.t
         if self.screen == 1:
-            keys = [("d", "done"), ("x", "dismiss"), ("r", "ready"), ("w", "waiting"), ("m", "status…"),
+            keys = [("d", "done"), ("x", "dismiss"), ("z", "snooze"), ("r", "ready"), ("w", "waiting"), ("m", "status…"),
                     ("y", "copy draft"), ("o", "open"), ("e", "edit"), ("s", "sort"), ("f", "filter"), ("g", "sync"), ("?", "help")]
         elif self.screen == 2:
             keys = [("A", "accept"), ("n", "next"), ("N", "note"), ("a", "add"), ("p", "pause"), ("d", "done"),
@@ -725,7 +741,7 @@ class App:
 
     def help(self):
         self.say("0/1/2 screens · j/k move · J/K scroll detail · Enter/m status menu · s/S sort · f filter · R reload · g sync · o open · e edit · q quit"
-                 "  |  Inbox: d done x dismiss r ready w waiting n reopen y copy  |  Efforts: a add A accept n next N note p pause d done x drop")
+                 "  |  Inbox: d done x dismiss z snooze Z wake r ready w waiting n reopen y copy  |  Efforts: a add A accept n next N note p pause d done x drop")
 
     # actions -----------------------------------------------------------------
     def set_item_status(self, cur, new):
@@ -752,6 +768,23 @@ class App:
                 new = self.pick("set status", list(STATUSES), cur.get("status"))
                 if new and new != cur.get("status"):
                     self.set_item_status(cur, new)
+                return
+            if key == "z":
+                if cur.get("status") not in OPEN_STATUSES:
+                    self.say("only open items can be snoozed", True)
+                    return
+                when = self.prompt("snooze until: 3 · 2w · 4h · tomorrow · fri · next-week · 14.10 · 2026-10-14")
+                if not when:
+                    self.say("cancelled")
+                    return
+                ok, out = run_script("snooze.py", cur["id"], when)
+                self.say(out, not ok)
+                self.reload()
+                return
+            if key == "Z":
+                ok, out = run_script("snooze.py", cur["id"], "--wake")
+                self.say(out, not ok)
+                self.reload()
                 return
             if key == "y":
                 text = cur.get("proposed_reply") or ""

@@ -7,7 +7,8 @@ Usage:
   ./list.py --source slack --kind commitment
   ./list.py --max-age 7              # created in the last 7 days
   ./list.py --min-age 7              # created more than 7 days ago (stale)
-  ./list.py --all                    # include archive/ (closed items)
+  ./list.py --snoozed                # only snoozed items, with when they come back
+  ./list.py --all                    # include archive/ (closed) and snoozed items
   ./list.py --all --ids              # every id ever recorded — the dedupe set for a scan
   ./list.py --json                   # full records, for programs
 """
@@ -15,7 +16,7 @@ Usage:
 import argparse
 import json
 
-from _inbox_common import (KINDS, OPEN_STATUSES, SOURCES, STATUSES, InboxError, die,
+from _inbox_common import (KINDS, OPEN_STATUSES, SOURCES, STATUSES, InboxError, die, is_snoozed,
                            load_all, load_config, local_zone, now_utc, parse_ts, rel,
                            sort_newest_first)
 
@@ -27,9 +28,12 @@ def _csv(values):
     return out
 
 
-def select(items, statuses=None, sources=None, kinds=None, max_age=None, min_age=None):
+def select(items, statuses=None, sources=None, kinds=None, max_age=None, min_age=None, snoozed="hide"):
+    """snoozed: "hide" (default), "only", or "show"."""
     now = now_utc()
     for it in items:
+        if snoozed != "show" and is_snoozed(it, now) != (snoozed == "only"):
+            continue
         if statuses and it.get("status") not in statuses:
             continue
         if sources and it.get("source") not in sources:
@@ -60,7 +64,8 @@ def main():
     ap.add_argument("--kind", action="append")
     ap.add_argument("--max-age", type=float, metavar="DAYS")
     ap.add_argument("--min-age", type=float, metavar="DAYS")
-    ap.add_argument("--all", action="store_true", help="include archived (closed) items")
+    ap.add_argument("--all", action="store_true", help="include archived (closed) and snoozed items")
+    ap.add_argument("--snoozed", action="store_true", help="only snoozed items")
     ap.add_argument("--ids", action="store_true", help="print ids only")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--limit", type=int)
@@ -83,7 +88,8 @@ def main():
             statuses = list(OPEN_STATUSES)
 
         items = load_all(include_archive=args.all or any(s in ("done", "dismissed") for s in statuses))
-        rows = sort_newest_first(select(items, statuses, sources, kinds, args.max_age, args.min_age))
+        snoozed = "only" if args.snoozed else ("show" if args.all else "hide")
+        rows = sort_newest_first(select(items, statuses, sources, kinds, args.max_age, args.min_age, snoozed))
         if args.limit:
             rows = rows[: args.limit]
     except InboxError as e:
@@ -109,6 +115,8 @@ def main():
     for it in rows:
         created = parse_ts(it["created_at"]).astimezone(tz).strftime("%Y-%m-%d %H:%M")
         draft = "*" if it.get("proposed_reply") else " "
+        if is_snoozed(it):
+            draft += f" (snoozed until {parse_ts(it['snoozed_until']).astimezone(tz):%a %d %b})"
         print(f"{it['status']:<9} {it['source']:<8} {it['kind']:<12} {created}  {fmt_age(it['created_at']):>4} {draft} "
               f"{it['title']}  [{it['id']}]")
 

@@ -40,6 +40,7 @@ def set_status(item_id, new_status, note=None, reopen=False):
     item["status"] = new_status
     if new_status in CLOSED_STATUSES:
         item["resolution"] = note or item.get("resolution")
+        item["snoozed_until"] = None
     else:
         item["resolution"] = None
     if note:

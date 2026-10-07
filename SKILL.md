@@ -91,6 +91,11 @@ python3 scripts/status.py "<id>" dismissed --note "bot alert, on-call owns these
 python3 scripts/status.py "<id>" new --reopen        # humans only
 ```
 
+**Snoozing is the user's.** `snooze.py "<id>" 3|2w|4h|tomorrow|fri|next-week|2026-10-14|14.10`
+hides an open item until then; `--wake` brings it back. Snoozed items are left
+out of `list.py` (see them with `--snoozed`; `--all` includes them), so they
+drop out of a routine's working set on their own. Routines never snooze or wake.
+
 `done` / `dismissed` move the file to `archive/YYYY-MM/`; a `--note` there is
 stored as `resolution`, the user's account of how it was settled, which the
 learn routine relies on. **Routines may only
