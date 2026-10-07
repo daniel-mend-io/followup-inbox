@@ -26,6 +26,7 @@ from _inbox_common import REPO_ROOT, InboxError, die, iso_utc, now_utc, parse_ts
 
 RELEASES_PATH = os.path.join(REPO_ROOT, "state", "releases.json")
 STALE_DAYS = 14
+REWRITE_DAYS = 7   # unchanged dates are re-stamped at most weekly, so a daily refresh is not a daily commit
 _VERSION = re.compile(r"^\d+\.\d+(\.\d+)?$")
 
 
@@ -50,13 +51,17 @@ def save(records):
         dt.date.fromisoformat(day)
         clean.append({"version": version, "date": day, "title": r.get("title") or f"{version} Deployments"})
     clean.sort(key=lambda r: r["date"])
+    current = load()
+    fresh = parse_ts(current.get("updated_at"))
+    if current.get("releases") == clean and fresh and now_utc() - fresh < dt.timedelta(days=REWRITE_DAYS):
+        return clean, False  # same dates, recently confirmed: leave the file (and git) alone
     os.makedirs(os.path.dirname(RELEASES_PATH), exist_ok=True)
     tmp = RELEASES_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump({"updated_at": iso_utc(), "releases": clean}, f, indent=2, ensure_ascii=False)
         f.write("\n")
     os.replace(tmp, RELEASES_PATH)
-    return clean
+    return clean, True
 
 
 def stale_warning(data=None, now=None):
@@ -92,8 +97,8 @@ def main():
     try:
         if args.cmd == "set":
             payload = json.load(sys.stdin)
-            saved = save(payload if isinstance(payload, list) else [payload])
-            print(f"saved {len(saved)} releases\t{rel(RELEASES_PATH)}")
+            saved, written = save(payload if isinstance(payload, list) else [payload])
+            print(f"{'saved' if written else 'unchanged'} {len(saved)} releases\t{rel(RELEASES_PATH)}")
             return
         config = load_config()
         tz = local_zone(config)

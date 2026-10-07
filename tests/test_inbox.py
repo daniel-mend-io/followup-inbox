@@ -317,6 +317,9 @@ class EffortAndTuiTests(unittest.TestCase):
         out = run(self.root, "releases.py", "set", "--json",
                   stdin=json.dumps([{"version": "26.10.1", "date": later}, {"version": "26.9.3", "date": soon}])).stdout
         self.assertIn("saved 2 releases", out)
+        again = run(self.root, "releases.py", "set", "--json",
+                    stdin=json.dumps([{"version": "26.9.3", "date": soon}, {"version": "26.10.1", "date": later}])).stdout
+        self.assertIn("unchanged 2 releases", again)                         # a daily refresh is not a daily commit
         bad = run(self.root, "releases.py", "set", "--json", stdin=json.dumps([{"version": "v1", "date": soon}]), check=False)
         self.assertEqual(bad.returncode, 1)
         self.assertIn("26.9.3", run(self.root, "releases.py", "next").stdout)
