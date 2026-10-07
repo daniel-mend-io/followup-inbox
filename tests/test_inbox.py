@@ -258,6 +258,30 @@ class EffortAndTuiTests(unittest.TestCase):
         self.assertIn("## efforts (1 open)", digest)
         self.assertIn("write one-pager (due 2026-10-05)", digest)
 
+    def test_tui_text_box_inserts_instead_of_overwriting(self):
+        from tui import LineEditor
+        keys = {"LEFT": 260, "RIGHT": 261, "HOME": 262, "END": 360, "BACKSPACE": 263, "DC": 330, "UP": 259, "DOWN": 258}
+        ed = LineEditor("settled in BR", width=10)
+        for _ in range(len("in BR")):
+            ed.key(260, keys)                              # cursor back to before "in"
+        for ch in "today ":
+            ed.key(ch, keys)
+        self.assertEqual(ed.text, "settled today in BR")    # inserted, nothing overwritten
+        ed.key("\x01", keys); ed.key("ł", keys)             # Ctrl-A, then a non-ASCII letter
+        self.assertEqual(ed.text, "łsettled today in BR")
+        ed.key("\x7f", keys)                               # backspace at the start of the text
+        self.assertEqual(ed.text, "settled today in BR")
+        ed.key("\x05", keys); ed.key("\x17", keys)          # Ctrl-E, Ctrl-W drops "BR"
+        self.assertEqual(ed.text, "settled today in ")
+        ed.key("Jakub took it", keys)                      # a paste arrives as one string
+        rows, cursor = ed.rows()
+        self.assertEqual(rows, ["settled to", "day in Jak", "ub took it", ""])
+        self.assertEqual(cursor, (3, 0))
+        self.assertEqual(ed.key("\n", keys), "save")
+        self.assertEqual(ed.key("\x1b", keys), "cancel")
+        ed.key("\x15", keys)
+        self.assertEqual((ed.text, ed.rows()), ("", ([""], (0, 0))))
+
     def test_tui_shaping_and_check(self):
         sys.path.insert(0, SCRIPTS)
         import tui

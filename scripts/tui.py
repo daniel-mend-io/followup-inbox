@@ -200,6 +200,73 @@ def open_url(url):
 # The curses app
 # ----------------------------------------------------------------------------
 
+class LineEditor:
+    """The text being typed into a prompt: insert mode, cursor keys, Unicode.
+
+    `key` takes what curses get_wch() returns (a str, or an int for special
+    keys) and returns "save", "cancel" or None. Kept free of curses so the
+    tests can drive it.
+    """
+
+    def __init__(self, text="", width=60):
+        self.buf, self.pos, self.width = list(text), len(text), max(1, width)
+
+    @property
+    def text(self):
+        return "".join(self.buf)
+
+    def rows(self):
+        """The text cut into rows of `width`, and the cursor's (row, col)."""
+        t, w = self.text, self.width
+        rows = [t[i:i + w] for i in range(0, len(t), w)] or [""]
+        if len(t) % w == 0 and t:
+            rows.append("")  # cursor sits at the start of a fresh row
+        return rows, divmod(self.pos, w)
+
+    def key(self, k, keys=None):
+        k_ = keys or {}
+        if k in ("\n", "\r") or k == k_.get("ENTER"):
+            return "save"
+        if k == "\x1b":
+            return "cancel"
+        if k in ("\x7f", "\b") or k == k_.get("BACKSPACE"):
+            if self.pos:
+                self.pos -= 1
+                del self.buf[self.pos]
+        elif k == k_.get("DC") or k == "\x04":                        # Delete, Ctrl-D
+            if self.pos < len(self.buf):
+                del self.buf[self.pos]
+        elif k == k_.get("LEFT") or k == "\x02":
+            self.pos = max(0, self.pos - 1)
+        elif k == k_.get("RIGHT") or k == "\x06":
+            self.pos = min(len(self.buf), self.pos + 1)
+        elif k == k_.get("UP"):
+            self.pos = max(0, self.pos - self.width)
+        elif k == k_.get("DOWN"):
+            self.pos = min(len(self.buf), self.pos + self.width)
+        elif k == k_.get("HOME") or k == "\x01":                      # Ctrl-A
+            self.pos = 0
+        elif k == k_.get("END") or k == "\x05":                       # Ctrl-E
+            self.pos = len(self.buf)
+        elif k == "\x15":                                             # Ctrl-U: clear
+            self.buf, self.pos = [], 0
+        elif k == "\x0b":                                             # Ctrl-K: to the end
+            del self.buf[self.pos:]
+        elif k == "\x17":                                             # Ctrl-W: word back
+            i = self.pos
+            while i and self.buf[i - 1] == " ":
+                i -= 1
+            while i and self.buf[i - 1] != " ":
+                i -= 1
+            del self.buf[i:self.pos]
+            self.pos = i
+        elif isinstance(k, str) and k.isprintable():
+            for ch in k:                                               # a paste can arrive as several chars
+                self.buf.insert(self.pos, ch)
+                self.pos += 1
+        return None
+
+
 class Theme:
     """Color pairs. Falls back gracefully on terminals without 256 colors."""
 
@@ -556,24 +623,68 @@ class App:
 
     # input --------------------------------------------------------------------
     def prompt(self, label, default=""):
-        c = self.t.c
+        """Modal text box. Returns the text (or `default` if left empty), None on Esc."""
+        c, t = self.t.c, self.t
         h, w = self.scr.getmaxyx()
-        self.fill(h - 1, 0, w, self.t.a("sel"))
-        self.put(h - 1, 1, label + " ", self.t.a("sel", c.A_BOLD))
-        if default:
-            self.put(h - 1, len(label) + 2, f"[{default}] ", self.t.a("sel"))
-        self.scr.refresh()
-        c.echo()
+        bw = max(20, min(w - 4, 78))
+        text_rows = 4
+        bh = text_rows + 4
+        y, x = max(1, (h - bh) // 2), max(0, (w - bw) // 2)
+        ed = LineEditor(default, bw - 4)
+        keys = {n: getattr(c, "KEY_" + n) for n in ("ENTER", "BACKSPACE", "DC", "LEFT", "RIGHT", "UP", "DOWN", "HOME", "END")}
+        hint = "Enter save · Esc cancel · ←→ ↑↓ · Ctrl-A/E start/end · Ctrl-U clear"
+        try:
+            c.set_escdelay(25)
+        except (AttributeError, c.error):
+            pass
         c.curs_set(1)
         try:
-            raw = self.scr.getstr(h - 1, min(len(label) + 2 + (len(default) + 3 if default else 0), w - 2), 500)
-        except KeyboardInterrupt:
-            raw = b""
+            while True:
+                for yy in range(y, y + bh):
+                    self.fill(yy, x, bw, 0)
+                self.box(y, x, bh, bw, label, t.a("accent"))
+                rows, (crow, ccol) = ed.rows()
+                top = max(0, crow - text_rows + 1)
+                for n, row in enumerate(rows[top:top + text_rows]):
+                    self.put(y + 1 + n, x + 2, row)
+                self.put(y + bh - 2, x + 2, hint, t.a("dim"), bw - 4)
+                self.scr.move(y + 1 + crow - top, x + 2 + ccol)
+                self.scr.refresh()
+                try:
+                    k = self.scr.get_wch()
+                except KeyboardInterrupt:
+                    return None
+                except c.error:
+                    continue
+                if k == c.KEY_RESIZE:
+                    h, w = self.scr.getmaxyx()
+                    continue
+                if k == "\x1b":
+                    k = self._escape_sequence(keys)  # an arrow curses did not translate, or a real Esc
+                done = ed.key(k, keys)
+                if done == "cancel":
+                    return None
+                if done == "save":
+                    return ed.text.strip() or default
         finally:
-            c.noecho()
             c.curs_set(0)
-        text = raw.decode("utf-8", "replace").strip()
-        return text or default
+
+    def _escape_sequence(self, keys):
+        """After an Esc, read what follows at once: `[D` / `OD` and friends are arrows, nothing is Esc."""
+        self.scr.nodelay(True)
+        try:
+            seq = ""
+            for _ in range(3):
+                try:
+                    seq += str(self.scr.get_wch())
+                except self.t.c.error:
+                    break
+        finally:
+            self.scr.nodelay(False)
+        arrows = {"D": "LEFT", "C": "RIGHT", "A": "UP", "B": "DOWN", "H": "HOME", "F": "END"}
+        if len(seq) >= 2 and seq[0] in "[O" and seq[-1] in arrows:
+            return keys[arrows[seq[-1]]]
+        return "\x1b"
 
     def pick(self, title, options, current=None):
         """Modal list picker; returns the chosen option or None."""
@@ -621,7 +732,10 @@ class App:
         extra = ["--reopen"] if cur.get("status") in ("done", "dismissed") and new not in ("done", "dismissed") else []
         if new in ("done", "dismissed") and cur.get("status") not in ("done", "dismissed"):
             ask = "how was it resolved?" if new == "done" else "why dismiss it?"
-            note = self.prompt(f"{ask} (Enter to skip)")
+            note = self.prompt(f"{ask} (Enter on empty to skip)")
+            if note is None:
+                self.say("cancelled")
+                return
             if note:
                 extra += ["--note", note]
         ok, out = run_script("status.py", cur["id"], new, *extra)
